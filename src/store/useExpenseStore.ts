@@ -112,8 +112,8 @@ export const useExpenseStore = create<ExpenseState>()(
             isApplyingRemoteUpdate = true;
             set({
               transactions: remoteTx,
-              aliases: data.payload.aliases || DEFAULT_ALIASES,
-              openingBalance: data.payload.openingBalance ?? 20000,
+              aliases: data?.payload?.aliases || DEFAULT_ALIASES,
+              openingBalance: data?.payload?.openingBalance ?? 20000,
               syncState: 'live',
               lastSyncedAt: new Date().toLocaleTimeString(),
             });
@@ -168,7 +168,9 @@ export const useExpenseStore = create<ExpenseState>()(
           .subscribe();
 
         return () => {
-          void supabase.removeChannel(channel);
+          if (supabase) {
+            void supabase.removeChannel(channel);
+          }
         };
       },
 
