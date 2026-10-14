@@ -14,8 +14,11 @@ import {
   ArrowDownLeft,
   Upload,
   Sparkles,
-  Cloud,
   Search,
+  LayoutDashboard,
+  Zap,
+  FileSpreadsheet,
+  ReceiptText,
 } from 'lucide-react';
 
 const PLACES = [
@@ -77,20 +80,15 @@ export default function App() {
     matchPayeeToAlias,
   } = useExpenseStore();
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'log' | 'import' | 'ledger' | 'cloud'>(
-    'overview'
-  );
+  const [activeTab, setActiveTab] = useState<'overview' | 'log' | 'import' | 'ledger'>('overview');
   const [bucketScope, setBucketScope] = useState<'ALL' | 'OOP' | 'SU_ID' | 'PARENTS'>('ALL');
   const [modeFilter, setModeFilter] = useState<string>('ALL');
   const [monthFilter, setMonthFilter] = useState<string>('ALL');
   const [shorthand, setShorthand] = useState('');
 
-  // Ledger Search, Filter & Memory Toggle
   const [ledgerSearch, setLedgerSearch] = useState('');
   const [rememberEdits, setRememberEdits] = useState(true);
-  const [syncStatus, setSyncStatus] = useState('');
 
-  // Importer State
   const [parsedRows, setParsedRows] = useState<RawParsedRow[]>([]);
   const [importError, setImportError] = useState<string>('');
   const [payeeOverrides, setPayeeOverrides] = useState<
@@ -100,7 +98,6 @@ export default function App() {
     >
   >({});
 
-  // Manual Inflow State
   const [inflowAmt, setInflowAmt] = useState('');
   const [inflowSource, setInflowSource] = useState<InflowCategory>('Parent Top-up');
   const [inflowNote, setInflowNote] = useState('');
@@ -110,7 +107,6 @@ export default function App() {
     return cleanup;
   }, [initRealtimeSync]);
 
-  // Android MacroDroid Deep-Link Handler
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const amt = parseFloat(params.get('amt') || '0');
@@ -296,7 +292,7 @@ export default function App() {
       const rows = await parseHDFCStatementFile(file);
       if (rows.length === 0) {
         setImportError(
-          'No valid transaction rows found. Ensure the file has Date, Narration, and Debit/Credit columns.'
+          'No valid transaction rows found. Ensure file contains Date, Narration, and Debit/Credit columns.'
         );
         return;
       }
@@ -309,7 +305,6 @@ export default function App() {
           initialOverrides[r.payee] = {
             place: matched.place,
             cat: matched.cat,
-            // Strictly UPI or Card for bank statements
             mode: r.detectedBankMode,
             inflowCat: matched.inflowCat || 'Parent Top-up',
           };
@@ -317,7 +312,7 @@ export default function App() {
       });
       setPayeeOverrides(initialOverrides);
     } catch {
-      setImportError('Failed to parse file. Check format and try again.');
+      setImportError('Failed to parse statement. Please check file format.');
     }
   };
 
@@ -362,7 +357,6 @@ export default function App() {
         rawPayee: r.payee,
         price: r.amount,
         txType: r.txType,
-        // Never allow SU, Cash, or Parents from a bank statement
         mode: cfg.mode,
         cat: cfg.cat,
         subcat: cfg.place,
@@ -383,31 +377,33 @@ export default function App() {
     n.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 
   return (
-    <div className="min-h-screen bg-[#09090b] text-zinc-100 antialiased selection:bg-zinc-800">
-      {/* Top Header */}
-      <header className="border-b border-zinc-800/80 bg-[#09090b]/95 sticky top-0 z-30 backdrop-blur">
-        <div className="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between">
-          <div className="flex items-center gap-6">
-            <span className="font-semibold tracking-tight text-sm text-zinc-100">
+    <div className="min-h-screen w-full max-w-[100vw] overflow-x-hidden bg-[#09090b] text-zinc-100 antialiased selection:bg-zinc-800 pb-24 md:pb-8">
+      {/* Mobile-Safe Top Header */}
+      <header className="border-b border-zinc-800/80 bg-[#09090b]/95 sticky top-0 z-30 backdrop-blur w-full">
+        <div className="max-w-6xl mx-auto px-3 sm:px-4 h-14 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-4 min-w-0">
+            <span className="font-semibold tracking-tight text-sm text-zinc-100 shrink-0">
               LEDGER / BITS
             </span>
-            <nav className="flex items-center gap-1">
+
+            {/* Desktop Navigation */}
+            <nav className="hidden md:flex items-center gap-1">
               {(
                 [
                   { id: 'overview', label: 'Overview' },
                   { id: 'log', label: 'Quick Entry' },
                   { id: 'import', label: 'Statement Import' },
                   { id: 'ledger', label: `Transactions (${transactions.length})` },
-                  { id: 'cloud', label: 'Cloud & Host' },
                 ] as const
               ).map((tab) => (
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${activeTab === tab.id
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                    activeTab === tab.id
                       ? 'bg-zinc-800 text-zinc-100'
                       : 'text-zinc-400 hover:text-zinc-200'
-                    }`}
+                  }`}
                 >
                   {tab.label}
                 </button>
@@ -415,92 +411,79 @@ export default function App() {
             </nav>
           </div>
 
-
-          <div className="flex items-center gap-1.5 text-xs font-mono">
-            <span
-              className={`w-2 h-2 rounded-full ${syncState === 'live'
-                  ? 'bg-emerald-400'
-                  : syncState === 'syncing'
+          {/* Status & Wallet Indicator */}
+          <div className="flex items-center gap-2 sm:gap-3 text-xs font-mono shrink-0">
+            <div className="flex items-center gap-1.5 bg-zinc-900 border border-zinc-800 px-2 py-1 rounded-md">
+              <span
+                className={`w-2 h-2 rounded-full shrink-0 ${
+                  syncState === 'live'
+                    ? 'bg-emerald-400'
+                    : syncState === 'syncing'
                     ? 'bg-amber-400 animate-pulse'
                     : syncState === 'error'
-                      ? 'bg-red-400'
-                      : 'bg-zinc-600'
+                    ? 'bg-red-400'
+                    : 'bg-zinc-600'
                 }`}
-            />
-            <span className="text-zinc-400 uppercase">
-              {syncState === 'live' ? `DB Live (${lastSyncedAt || 'synced'})` : syncState}
-            </span>
-            {syncError && <span className="text-red-400 ml-1">({syncError})</span>}
-          </div>
+              />
+              <span className="text-[11px] text-zinc-300">
+                {syncState === 'live' ? 'LIVE' : syncState.toUpperCase()}
+              </span>
+            </div>
 
-          <div className="hidden sm:flex items-center gap-4 text-xs font-mono">
-            <div>
-              <span className="text-zinc-500 mr-1.5">LIQUID BAL</span>
+            <div className="bg-zinc-900 border border-zinc-800 px-2.5 py-1 rounded-md text-[11px]">
+              <span className="text-zinc-500 mr-1 hidden sm:inline">BAL</span>
               <span
                 className={
                   walletStats.liquidBalance < 0
-                    ? 'text-red-400 font-medium'
-                    : 'text-zinc-100 font-medium'
+                    ? 'text-red-400 font-semibold'
+                    : 'text-zinc-100 font-semibold'
                 }
               >
                 ₹{fmt(walletStats.liquidBalance)}
               </span>
             </div>
-            <span className="text-zinc-800">|</span>
-            <div>
-              <span className="text-zinc-500 mr-1.5">BURN</span>
-              <span className="text-zinc-300">₹{Math.round(walletStats.dailyBurn)}/d</span>
-            </div>
           </div>
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-4 py-6 space-y-6">
+      {/* Main Content Container with strict mobile bounds */}
+      <main className="max-w-6xl mx-auto px-3 sm:px-4 py-4 sm:py-6 space-y-4 sm:space-y-6 w-full overflow-hidden">
         {/* TAB 1: OVERVIEW */}
         {activeTab === 'overview' && (
-          <div className="space-y-6">
-            {/* Filter Bar + Opening Balance Adjuster */}
-            <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-zinc-800/80">
-              <div className="inline-flex p-0.5 bg-zinc-900 border border-zinc-800 rounded-md">
-                {(
-                  [
-                    { id: 'ALL', label: 'All Spend' },
-                    { id: 'OOP', label: 'Out-of-Pocket' },
-                    { id: 'SU_ID', label: 'SU & ID Credit' },
-                    { id: 'PARENTS', label: 'Parents' },
-                  ] as const
-                ).map((b) => (
-                  <button
-                    key={b.id}
-                    onClick={() => setBucketScope(b.id)}
-                    className={`px-3 py-1 text-xs font-medium rounded-sm transition ${bucketScope === b.id
-                        ? 'bg-zinc-800 text-zinc-100'
-                        : 'text-zinc-400 hover:text-zinc-200'
+          <div className="space-y-4 sm:space-y-6">
+            {/* Horizontal Scrollable Filter Strip */}
+            <div className="space-y-2.5 pb-2 border-b border-zinc-800/80">
+              <div className="flex items-center gap-2 overflow-x-auto no-scrollbar w-full py-1">
+                <div className="inline-flex p-0.5 bg-zinc-900 border border-zinc-800 rounded-md shrink-0">
+                  {(
+                    [
+                      { id: 'ALL', label: 'All' },
+                      { id: 'OOP', label: 'Out-of-Pocket' },
+                      { id: 'SU_ID', label: 'SU & ID' },
+                      { id: 'PARENTS', label: 'Parents' },
+                    ] as const
+                  ).map((b) => (
+                    <button
+                      key={b.id}
+                      onClick={() => setBucketScope(b.id)}
+                      className={`px-2.5 py-1 text-xs font-medium rounded-sm whitespace-nowrap transition ${
+                        bucketScope === b.id
+                          ? 'bg-zinc-800 text-zinc-100'
+                          : 'text-zinc-400 hover:text-zinc-200'
                       }`}
-                  >
-                    {b.label}
-                  </button>
-                ))}
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="flex items-center gap-1.5 bg-zinc-900 border border-zinc-800 rounded-md px-2.5 py-1 text-xs">
-                  <span className="text-zinc-500">Aug 1 Opening Bal: ₹</span>
-                  <input
-                    type="number"
-                    value={openingBalance}
-                    onChange={(e) => setOpeningBalance(parseFloat(e.target.value) || 0)}
-                    className="w-20 bg-transparent font-mono text-zinc-200 focus:outline-none"
-                  />
+                    >
+                      {b.label}
+                    </button>
+                  ))}
                 </div>
 
                 <select
                   value={modeFilter}
                   onChange={(e) => setModeFilter(e.target.value)}
-                  className="bg-zinc-900 border border-zinc-800 rounded-md px-2.5 py-1 text-xs text-zinc-200"
+                  className="bg-zinc-900 border border-zinc-800 rounded-md px-2 py-1 text-xs text-zinc-200 shrink-0"
                 >
                   <option value="ALL">Mode: All</option>
-                  <option value="UPI">UPI (GPay)</option>
+                  <option value="UPI">UPI</option>
                   <option value="SU">SU App</option>
                   <option value="ID">Campus ID</option>
                   <option value="Cash">Cash</option>
@@ -511,9 +494,9 @@ export default function App() {
                 <select
                   value={monthFilter}
                   onChange={(e) => setMonthFilter(e.target.value)}
-                  className="bg-zinc-900 border border-zinc-800 rounded-md px-2.5 py-1 text-xs text-zinc-200"
+                  className="bg-zinc-900 border border-zinc-800 rounded-md px-2 py-1 text-xs text-zinc-200 shrink-0"
                 >
-                  <option value="ALL">Period: All Time (Aug+)</option>
+                  <option value="ALL">Period: All</option>
                   {availableMonths.map((m) => (
                     <option key={m} value={m}>
                       {m}
@@ -521,69 +504,82 @@ export default function App() {
                   ))}
                 </select>
               </div>
+
+              {/* Opening balance field */}
+              <div className="flex items-center justify-between text-xs text-zinc-400 bg-zinc-900/50 border border-zinc-800/80 px-2.5 py-1.5 rounded-md">
+                <span>Aug 1 Opening Balance:</span>
+                <div className="flex items-center gap-1 font-mono">
+                  <span>₹</span>
+                  <input
+                    type="number"
+                    value={openingBalance}
+                    onChange={(e) => setOpeningBalance(parseFloat(e.target.value) || 0)}
+                    className="w-20 bg-zinc-950 border border-zinc-800 rounded px-1.5 py-0.5 text-right font-mono text-zinc-200 focus:outline-none"
+                  />
+                </div>
+              </div>
             </div>
 
-            {/* 4-Column Structural Metric Strip */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 bg-zinc-800/80 gap-px border border-zinc-800 rounded-lg overflow-hidden">
-              <div className="bg-[#09090b] p-4">
-                <div className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider">
+            {/* Metric Grid: 2 Columns on Mobile, 4 Columns on Desktop */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 bg-zinc-800/80 gap-px border border-zinc-800 rounded-lg overflow-hidden w-full">
+              <div className="bg-[#09090b] p-3 sm:p-4">
+                <div className="text-[10px] sm:text-[11px] font-medium text-zinc-500 uppercase tracking-wider">
                   Filtered Spend
                 </div>
-                <div className="text-2xl font-mono font-semibold text-zinc-100 mt-1">
+                <div className="text-lg sm:text-2xl font-mono font-semibold text-zinc-100 mt-1 truncate">
                   ₹{fmt(bucketTotals.activeTotal)}
                 </div>
-                <div className="text-xs text-zinc-500 mt-1 font-mono">
+                <div className="text-[11px] text-zinc-500 mt-0.5 font-mono">
                   {activeDebits.length} txns
                 </div>
               </div>
 
-              <div className="bg-[#09090b] p-4">
-                <div className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider">
-                  Out-of-Pocket (Bank/Cash)
+              <div className="bg-[#09090b] p-3 sm:p-4">
+                <div className="text-[10px] sm:text-[11px] font-medium text-zinc-500 uppercase tracking-wider">
+                  Out-of-Pocket
                 </div>
-                <div className="text-2xl font-mono font-semibold text-zinc-100 mt-1">
+                <div className="text-lg sm:text-2xl font-mono font-semibold text-zinc-100 mt-1 truncate">
                   ₹{fmt(bucketTotals.oop)}
                 </div>
-                <div className="text-xs text-zinc-500 mt-1 font-mono">
-                  Liquid left: ₹{fmt(walletStats.liquidBalance)} ({walletStats.runwayDays}d)
+                <div className="text-[11px] text-zinc-500 mt-0.5 font-mono truncate">
+                  Bal: ₹{fmt(walletStats.liquidBalance)}
                 </div>
               </div>
 
-              <div className="bg-[#09090b] p-4">
-                <div className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider">
-                  SU App & ID Credit
+              <div className="bg-[#09090b] p-3 sm:p-4">
+                <div className="text-[10px] sm:text-[11px] font-medium text-zinc-500 uppercase tracking-wider">
+                  SU & ID Credit
                 </div>
-                <div className="text-2xl font-mono font-semibold text-zinc-100 mt-1">
+                <div className="text-lg sm:text-2xl font-mono font-semibold text-zinc-100 mt-1 truncate">
                   ₹{fmt(bucketTotals.su_id)}
                 </div>
-                <div className="text-xs text-zinc-500 mt-1 font-mono">
+                <div className="text-[11px] text-zinc-500 mt-0.5 font-mono truncate">
                   SU ₹{fmt(bucketTotals.su)} · ID ₹{fmt(bucketTotals.id)}
                 </div>
               </div>
 
-              <div className="bg-[#09090b] p-4">
-                <div className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider">
-                  Total Inflows Received
+              <div className="bg-[#09090b] p-3 sm:p-4">
+                <div className="text-[10px] sm:text-[11px] font-medium text-zinc-500 uppercase tracking-wider">
+                  Total Inflows
                 </div>
-                <div className="text-2xl font-mono font-semibold text-zinc-100 mt-1">
+                <div className="text-lg sm:text-2xl font-mono font-semibold text-zinc-100 mt-1 truncate">
                   ₹{fmt(walletStats.totalCredits)}
                 </div>
-                <div className="text-xs text-zinc-500 mt-1 font-mono">
-                  Parents ₹{fmt(walletStats.parentInflows)} · Gifts ₹{fmt(walletStats.relativeInflows)}
+                <div className="text-[11px] text-zinc-500 mt-0.5 font-mono truncate">
+                  Par ₹{fmt(walletStats.parentInflows)}
                 </div>
               </div>
             </div>
 
-            {/* 3-Column Analytical Breakdowns */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="border border-zinc-800/90 rounded-lg p-4 space-y-3">
+            {/* Breakdowns: Responsive Single Column on Mobile */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6">
+              <div className="border border-zinc-800/90 rounded-lg p-3.5 space-y-3">
                 <div className="flex justify-between items-center border-b border-zinc-800/80 pb-2">
                   <h3 className="text-xs font-medium uppercase tracking-wider text-zinc-400">
                     By Payment Mode
                   </h3>
-                  <span className="text-[11px] text-zinc-500">Click to isolate</span>
                 </div>
-                <div className="space-y-2.5">
+                <div className="space-y-2">
                   {breakdowns.modes.map(([mode, info]) => {
                     const total = periodDebits.reduce((s, t) => s + t.price, 0) || 1;
                     const pct = Math.round((info.sum / total) * 100);
@@ -595,8 +591,7 @@ export default function App() {
                       >
                         <div className="flex justify-between text-xs">
                           <span className="text-zinc-200 group-hover:text-white font-medium">
-                            {mode}{' '}
-                            <span className="text-zinc-500 font-mono">({info.count})</span>
+                            {mode} <span className="text-zinc-500 font-mono">({info.count})</span>
                           </span>
                           <span className="font-mono text-zinc-300">
                             ₹{fmt(info.sum)} <span className="text-zinc-500">({pct}%)</span>
@@ -611,25 +606,23 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="border border-zinc-800/90 rounded-lg p-4 space-y-3">
+              <div className="border border-zinc-800/90 rounded-lg p-3.5 space-y-3">
                 <div className="flex justify-between items-center border-b border-zinc-800/80 pb-2">
                   <h3 className="text-xs font-medium uppercase tracking-wider text-zinc-400">
-                    Top Places & Vendors
+                    Top Campus Spots
                   </h3>
-                  <span className="text-[11px] text-zinc-500">Click Other in Ledger to map</span>
                 </div>
-                <div className="space-y-2.5">
-                  {breakdowns.places.slice(0, 8).map(([place, info]) => {
+                <div className="space-y-2">
+                  {breakdowns.places.slice(0, 7).map(([place, info]) => {
                     const max = breakdowns.places[0]?.[1].sum || 1;
                     const pct = Math.round((info.sum / max) * 100);
                     return (
                       <div key={place} className="space-y-1">
                         <div className="flex justify-between text-xs">
-                          <span className="text-zinc-200 font-medium">
-                            {place}{' '}
-                            <span className="text-zinc-500 font-mono">({info.count})</span>
+                          <span className="text-zinc-200 font-medium truncate max-w-[150px]">
+                            {place} <span className="text-zinc-500 font-mono">({info.count})</span>
                           </span>
-                          <span className="font-mono text-zinc-300">₹{fmt(info.sum)}</span>
+                          <span className="font-mono text-zinc-300 shrink-0">₹{fmt(info.sum)}</span>
                         </div>
                         <div className="w-full h-1 bg-zinc-900 rounded-full overflow-hidden">
                           <div className="h-full bg-zinc-400" style={{ width: `${pct}%` }} />
@@ -640,25 +633,23 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="border border-zinc-800/90 rounded-lg p-4 space-y-3">
+              <div className="border border-zinc-800/90 rounded-lg p-3.5 space-y-3">
                 <div className="flex justify-between items-center border-b border-zinc-800/80 pb-2">
                   <h3 className="text-xs font-medium uppercase tracking-wider text-zinc-400">
                     By Category
                   </h3>
-                  <span className="text-[11px] text-zinc-500">Active view</span>
                 </div>
-                <div className="space-y-2.5">
+                <div className="space-y-2">
                   {breakdowns.categories.map(([cat, info]) => {
                     const total = bucketTotals.activeTotal || 1;
                     const pct = Math.round((info.sum / total) * 100);
                     return (
                       <div key={cat} className="space-y-1">
                         <div className="flex justify-between text-xs">
-                          <span className="text-zinc-200 font-medium">
-                            {cat}{' '}
-                            <span className="text-zinc-500 font-mono">({info.count})</span>
+                          <span className="text-zinc-200 font-medium truncate max-w-[150px]">
+                            {cat} <span className="text-zinc-500 font-mono">({info.count})</span>
                           </span>
-                          <span className="font-mono text-zinc-300">
+                          <span className="font-mono text-zinc-300 shrink-0">
                             ₹{fmt(info.sum)} <span className="text-zinc-500">({pct}%)</span>
                           </span>
                         </div>
@@ -676,47 +667,48 @@ export default function App() {
 
         {/* TAB 2: QUICK ENTRY */}
         {activeTab === 'log' && (
-          <div className="space-y-6">
+          <div className="space-y-4 sm:space-y-6">
+            {/* Shorthand bar */}
             <form
               onSubmit={handleShorthandSubmit}
-              className="border border-zinc-800 rounded-lg p-4 bg-zinc-900/40 space-y-2"
+              className="border border-zinc-800 rounded-lg p-3 sm:p-4 bg-zinc-900/40 space-y-2"
             >
               <div className="flex justify-between items-center">
                 <label className="text-xs font-medium text-zinc-300">Command Entry</label>
-                <span className="text-[11px] text-zinc-500 font-mono">
-                  Syntax: [item] [amount] [su|upi|id|cash] [split]
+                <span className="text-[10px] text-zinc-500 font-mono hidden sm:inline">
+                  [item] [amount] [mode]
                 </span>
               </div>
               <div className="flex gap-2">
                 <input
                   value={shorthand}
                   onChange={(e) => setShorthand(e.target.value)}
-                  placeholder="redi maggi 80 su   or   cnot pasta 140 upi split"
-                  className="flex-1 bg-[#09090b] border border-zinc-800 rounded-md px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-500 font-mono"
+                  placeholder="e.g. redi maggi 80 su"
+                  className="flex-1 min-w-0 bg-[#09090b] border border-zinc-800 rounded-md px-3 py-2 text-xs sm:text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-500 font-mono"
                 />
                 <button
                   type="submit"
-                  className="bg-zinc-100 text-zinc-950 hover:bg-zinc-200 px-4 py-2 rounded-md font-medium text-xs transition"
+                  className="bg-zinc-100 text-zinc-950 px-3.5 py-2 rounded-md font-medium text-xs shrink-0"
                 >
                   Record
                 </button>
               </div>
             </form>
 
-            <div className="border border-zinc-800 rounded-lg p-4 space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-xs font-medium text-zinc-400 uppercase tracking-wider">
-                  Default Payment Mode (Use SU for SU App QR scans)
+            {/* Presets and Mode Selector */}
+            <div className="border border-zinc-800 rounded-lg p-3 sm:p-4 space-y-3">
+              <div className="flex items-center justify-between gap-2 overflow-x-auto no-scrollbar py-0.5">
+                <span className="text-xs font-medium text-zinc-400 uppercase tracking-wider shrink-0">
+                  Active Mode:
                 </span>
-                <div className="inline-flex p-0.5 bg-zinc-900 border border-zinc-800 rounded-md">
+                <div className="inline-flex p-0.5 bg-zinc-900 border border-zinc-800 rounded-md shrink-0">
                   {(['UPI', 'SU', 'ID', 'Cash', 'Card', 'Parents'] as PaymentMode[]).map((m) => (
                     <button
                       key={m}
                       onClick={() => setQuickMode(m)}
-                      className={`px-3 py-1 text-xs font-mono font-medium rounded-sm transition ${quickMode === m
-                          ? 'bg-zinc-100 text-zinc-950'
-                          : 'text-zinc-400 hover:text-zinc-200'
-                        }`}
+                      className={`px-2.5 py-1 text-xs font-mono font-medium rounded-sm transition ${
+                        quickMode === m ? 'bg-zinc-100 text-zinc-950' : 'text-zinc-400'
+                      }`}
                     >
                       {m}
                     </button>
@@ -744,16 +736,14 @@ export default function App() {
                         status: 'completed',
                       })
                     }
-                    className="border border-zinc-800/90 hover:border-zinc-600 bg-zinc-900/30 rounded-md p-3 text-left transition group"
+                    className="border border-zinc-800/90 active:bg-zinc-800 bg-zinc-900/30 rounded-md p-2.5 text-left transition"
                   >
-                    <div className="flex justify-between items-center text-[11px] text-zinc-500 font-mono">
+                    <div className="flex justify-between items-center text-[10px] text-zinc-500 font-mono">
                       <span>{p.place}</span>
                       <span>{quickMode}</span>
                     </div>
-                    <div className="text-xs font-medium text-zinc-200 mt-1 group-hover:text-white">
-                      {p.name}
-                    </div>
-                    <div className="text-sm font-mono font-semibold text-zinc-100 mt-0.5">
+                    <div className="text-xs font-medium text-zinc-200 mt-1 truncate">{p.name}</div>
+                    <div className="text-xs sm:text-sm font-mono font-semibold text-zinc-100 mt-0.5">
                       ₹{p.price}
                     </div>
                   </button>
@@ -761,9 +751,10 @@ export default function App() {
               </div>
             </div>
 
-            <div className="border border-zinc-800 rounded-lg p-4 space-y-3">
+            {/* Inflow Box */}
+            <div className="border border-zinc-800 rounded-lg p-3 sm:p-4 space-y-2.5">
               <div className="text-xs font-medium text-zinc-400 uppercase tracking-wider">
-                Record Inflow (Parent Top-Up / Relative Gift / Split Return)
+                Log Inflow / Top-up
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
                 <input
@@ -776,7 +767,7 @@ export default function App() {
                 <select
                   value={inflowSource}
                   onChange={(e) => setInflowSource(e.target.value as InflowCategory)}
-                  className="bg-[#09090b] border border-zinc-800 rounded-md px-3 py-1.5 text-xs"
+                  className="bg-[#09090b] border border-zinc-800 rounded-md px-2.5 py-1.5 text-xs"
                 >
                   {INFLOW_TYPES.map((t) => (
                     <option key={t} value={t}>
@@ -812,64 +803,56 @@ export default function App() {
                     setInflowAmt('');
                     setInflowNote('');
                   }}
-                  className="bg-zinc-800 hover:bg-zinc-700 text-zinc-100 rounded-md font-medium text-xs py-1.5 transition"
+                  className="bg-zinc-800 text-zinc-100 rounded-md font-medium text-xs py-1.5"
                 >
-                  Add Inflow
+                  + Add to Balance
                 </button>
               </div>
             </div>
           </div>
         )}
 
-        {/* TAB 3: HDFC STATEMENT IMPORTER (STRICTLY UPI / CARD) */}
+        {/* TAB 3: STATEMENT IMPORTER */}
         {activeTab === 'import' && (
-          <div className="space-y-6">
-            <div className="border border-zinc-800 rounded-lg p-5 space-y-3">
+          <div className="space-y-4 sm:space-y-6">
+            <div className="border border-zinc-800 rounded-lg p-4 space-y-3">
               <div>
-                <h2 className="text-sm font-medium text-zinc-100">
-                  HDFC Bank Statement Importer (.txt, .csv, .xls)
-                </h2>
+                <h2 className="text-sm font-medium text-zinc-100">HDFC Delimited .txt Importer</h2>
                 <p className="text-xs text-zinc-500 mt-0.5">
-                  Bank statements only permit UPI or Debit Card modes (never SU, Cash, or Parents).
+                  Parsed locally. Strictly logged as UPI or Card transactions.
                 </p>
               </div>
-
               <input
                 type="file"
                 accept=".txt,.csv,.xls,.xlsx"
                 onChange={handleFileUpload}
-                className="block w-full text-xs text-zinc-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border file:border-zinc-700 file:bg-zinc-900 file:text-zinc-200 file:font-medium hover:file:bg-zinc-800 cursor-pointer"
+                className="block w-full text-xs text-zinc-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border file:border-zinc-700 file:bg-zinc-900 file:text-zinc-200 cursor-pointer"
               />
               {importError && <p className="text-xs text-red-400 font-mono">{importError}</p>}
             </div>
 
             {uniquePayeeGroups.length > 0 && (
               <div className="border border-zinc-800 rounded-lg overflow-hidden">
-                <div className="p-4 bg-zinc-900/50 border-b border-zinc-800 flex flex-wrap justify-between items-center gap-3">
-                  <div>
-                    <h3 className="text-xs font-medium uppercase tracking-wider text-zinc-300">
-                      Unique Payee Mapping ({uniquePayeeGroups.length} payees · {parsedRows.length} rows)
-                    </h3>
-                  </div>
+                <div className="p-3 bg-zinc-900/50 border-b border-zinc-800 flex justify-between items-center gap-2">
+                  <span className="text-xs font-medium text-zinc-300">
+                    {uniquePayeeGroups.length} payees detected
+                  </span>
                   <button
                     onClick={commitBulkImport}
-                    className="bg-zinc-100 text-zinc-950 hover:bg-zinc-200 px-4 py-1.5 rounded-md font-medium text-xs transition"
+                    className="bg-zinc-100 text-zinc-950 px-3 py-1 rounded text-xs font-medium"
                   >
-                    Import {parsedRows.length} Bank Rows
+                    Commit {parsedRows.length} Rows
                   </button>
                 </div>
-
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
-                    <thead className="border-b border-zinc-800 text-zinc-500 font-mono uppercase text-[11px]">
+                <div className="overflow-x-auto w-full">
+                  <table className="w-full text-left text-xs min-w-[500px]">
+                    <thead className="border-b border-zinc-800 text-zinc-500 font-mono text-[11px]">
                       <tr>
-                        <th className="py-2.5 px-3">Payee</th>
-                        <th className="py-2.5 px-3">Flow</th>
-                        <th className="py-2.5 px-3 text-right">Count</th>
-                        <th className="py-2.5 px-3 text-right">Total (₹)</th>
-                        <th className="py-2.5 px-3">Spot / Inflow Type</th>
-                        <th className="py-2.5 px-3">Category</th>
-                        <th className="py-2.5 px-3">Bank Mode</th>
+                        <th className="py-2 px-2.5">Payee</th>
+                        <th className="py-2 px-2.5">Type</th>
+                        <th className="py-2 px-2.5">Total</th>
+                        <th className="py-2 px-2.5">Place / Source</th>
+                        <th className="py-2 px-2.5">Category</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-800/60">
@@ -881,9 +864,11 @@ export default function App() {
                           inflowCat: 'Parent Top-up',
                         };
                         return (
-                          <tr key={`${g.txType}_${g.payee}`} className="hover:bg-zinc-900/30">
-                            <td className="py-2 px-3 font-mono text-zinc-200">{g.payee}</td>
-                            <td className="py-2 px-3 font-mono text-[11px]">
+                          <tr key={`${g.txType}_${g.payee}`}>
+                            <td className="py-2 px-2.5 font-mono text-zinc-200 truncate max-w-[130px]">
+                              {g.payee}
+                            </td>
+                            <td className="py-2 px-2.5 font-mono text-[10px]">
                               <span
                                 className={
                                   g.txType === 'CREDIT' ? 'text-emerald-400' : 'text-zinc-400'
@@ -892,13 +877,8 @@ export default function App() {
                                 {g.txType}
                               </span>
                             </td>
-                            <td className="py-2 px-3 text-right font-mono text-zinc-400">
-                              {g.count}
-                            </td>
-                            <td className="py-2 px-3 text-right font-mono text-zinc-200">
-                              ₹{fmt(g.total)}
-                            </td>
-                            <td className="py-2 px-3">
+                            <td className="py-2 px-2.5 font-mono">₹{fmt(g.total)}</td>
+                            <td className="py-2 px-2.5">
                               {g.txType === 'CREDIT' ? (
                                 <select
                                   value={cfg.inflowCat}
@@ -911,7 +891,7 @@ export default function App() {
                                       },
                                     }))
                                   }
-                                  className="bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs"
+                                  className="bg-zinc-900 border border-zinc-800 rounded px-1.5 py-0.5 text-xs"
                                 >
                                   {INFLOW_TYPES.map((t) => (
                                     <option key={t} value={t}>
@@ -928,7 +908,7 @@ export default function App() {
                                       [g.payee]: { ...cfg, place: e.target.value },
                                     }))
                                   }
-                                  className="bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs"
+                                  className="bg-zinc-900 border border-zinc-800 rounded px-1.5 py-0.5 text-xs"
                                 >
                                   {PLACES.map((spot) => (
                                     <option key={spot} value={spot}>
@@ -938,7 +918,7 @@ export default function App() {
                                 </select>
                               )}
                             </td>
-                            <td className="py-2 px-3">
+                            <td className="py-2 px-2.5">
                               <select
                                 value={cfg.cat}
                                 onChange={(e) =>
@@ -947,31 +927,13 @@ export default function App() {
                                     [g.payee]: { ...cfg, cat: e.target.value as ExpenseCategory },
                                   }))
                                 }
-                                className="bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs"
+                                className="bg-zinc-900 border border-zinc-800 rounded px-1.5 py-0.5 text-xs"
                               >
                                 {CATEGORIES.map((c) => (
                                   <option key={c} value={c}>
                                     {c}
                                   </option>
                                 ))}
-                              </select>
-                            </td>
-                            <td className="py-2 px-3">
-                              <select
-                                value={cfg.mode}
-                                onChange={(e) =>
-                                  setPayeeOverrides((prev) => ({
-                                    ...prev,
-                                    [g.payee]: {
-                                      ...cfg,
-                                      mode: e.target.value as 'UPI' | 'Card',
-                                    },
-                                  }))
-                                }
-                                className="bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs font-mono"
-                              >
-                                <option value="UPI">UPI</option>
-                                <option value="Card">Card</option>
                               </select>
                             </td>
                           </tr>
@@ -985,112 +947,67 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 4: EDITABLE TRANSACTIONS LEDGER WITH RETROSPECTIVE MEMORY */}
+        {/* TAB 4: TRANSACTIONS LEDGER */}
         {activeTab === 'ledger' && (
-          <div className="space-y-4">
-            <div className="flex flex-wrap justify-between items-center gap-3 bg-zinc-900/40 border border-zinc-800 rounded-lg p-3">
-              <div className="flex items-center gap-2 flex-1 min-w-[220px]">
-                <Search className="w-3.5 h-3.5 text-zinc-500" />
+          <div className="space-y-3 w-full overflow-hidden">
+            <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-2 bg-zinc-900/40 border border-zinc-800 rounded-lg p-2.5">
+              <div className="flex items-center gap-2 flex-1">
+                <Search className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
                 <input
                   value={ledgerSearch}
                   onChange={(e) => setLedgerSearch(e.target.value)}
-                  placeholder="Search merchant, note, place, or date..."
+                  placeholder="Search merchant, place, date..."
                   className="bg-transparent text-xs text-zinc-100 placeholder:text-zinc-600 focus:outline-none w-full"
                 />
               </div>
 
-              <div className="flex flex-wrap items-center gap-3">
-                <label className="flex items-center gap-1.5 text-xs text-zinc-300 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={rememberEdits}
-                    onChange={(e) => setRememberEdits(e.target.checked)}
-                    className="rounded border-zinc-700"
-                  />
-                  <span>Auto-update & remember all from same payee when edited</span>
-                </label>
-
+              <div className="flex items-center justify-between sm:justify-end gap-2">
                 <button
                   onClick={reapplyAliasesToExisting}
-                  className="inline-flex items-center gap-1.5 bg-zinc-100 text-zinc-950 hover:bg-zinc-200 px-3 py-1 rounded text-xs font-medium transition"
-                  title="Fixes accidental SU tags on bank rows and maps Vending Brothers, Namonarayan, etc."
+                  className="inline-flex items-center gap-1 bg-zinc-100 text-zinc-950 px-2.5 py-1 rounded text-xs font-medium shrink-0"
                 >
-                  <Sparkles className="w-3.5 h-3.5" /> Re-Run Smart Merchant Rules
+                  <Sparkles className="w-3 h-3" /> Auto-Clean
                 </button>
 
                 {transactions.length > 0 && (
                   <button
                     onClick={() => {
-                      if (confirm('Clear all transactions?')) clearAllTransactions();
+                      if (confirm('Clear all entries?')) clearAllTransactions();
                     }}
-                    className="text-xs text-zinc-500 hover:text-red-400 transition"
+                    className="text-xs text-zinc-500 hover:text-red-400 p-1"
                   >
-                    Clear All
+                    Clear
                   </button>
                 )}
               </div>
             </div>
 
-            <div className="border border-zinc-800 rounded-lg overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="border-b border-zinc-800 text-zinc-500 font-mono uppercase text-[11px] bg-zinc-900/40">
+            {/* Scrollable table container */}
+            <div className="border border-zinc-800 rounded-lg overflow-x-auto w-full">
+              <table className="w-full text-left text-xs min-w-[620px]">
+                <thead className="border-b border-zinc-800 text-zinc-500 font-mono uppercase text-[10px] bg-zinc-900/40">
                   <tr>
-                    <th className="py-2.5 px-3">Date</th>
-                    <th className="py-2.5 px-3">Description (Editable)</th>
-                    <th className="py-2.5 px-3">Spot / Source (Editable)</th>
-                    <th className="py-2.5 px-3">Category (Editable)</th>
-                    <th className="py-2.5 px-3">Mode (Editable)</th>
-                    <th className="py-2.5 px-3 text-right">Amount (₹)</th>
-                    <th className="py-2.5 px-3"></th>
+                    <th className="py-2 px-2.5">Date</th>
+                    <th className="py-2 px-2.5">Description</th>
+                    <th className="py-2 px-2.5">Place / Inflow</th>
+                    <th className="py-2 px-2.5">Category</th>
+                    <th className="py-2 px-2.5">Mode</th>
+                    <th className="py-2 px-2.5 text-right">Amount</th>
+                    <th className="py-2 px-2"></th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-zinc-800/60">
+                <tbody className="divide-y divide-zinc-800/60 font-mono">
                   {filteredLedger.map((t) => (
                     <tr key={t.id} className="hover:bg-zinc-900/30">
-                      <td className="py-2 px-3 font-mono text-zinc-400 whitespace-nowrap">
-                        <input
-                          type="date"
-                          value={t.date}
-                          onChange={(e) => updateTransaction(t.id, { date: e.target.value }, false)}
-                          className="bg-transparent font-mono text-xs text-zinc-400 focus:outline-none"
-                        />
+                      <td className="py-2 px-2.5 text-zinc-400 whitespace-nowrap text-[11px]">
+                        {t.date.slice(5)}
                       </td>
-                      <td className="py-2 px-3 font-medium text-zinc-200">
-                        <div className="flex items-center gap-1.5">
-                          {t.txType === 'CREDIT' ? (
-                            <ArrowDownLeft className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                          ) : (
-                            <ArrowUpRight className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
-                          )}
-                          <input
-                            type="text"
-                            value={t.name}
-                            onChange={(e) =>
-                              updateTransaction(t.id, { name: e.target.value }, false)
-                            }
-                            className="bg-transparent text-zinc-200 focus:bg-zinc-900 focus:outline-none px-1 py-0.5 rounded w-full"
-                          />
-                        </div>
+                      <td className="py-2 px-2.5 text-zinc-200 font-sans max-w-[140px] truncate">
+                        {t.name}
                       </td>
-                      <td className="py-2 px-3">
+                      <td className="py-2 px-2.5 font-sans">
                         {t.txType === 'CREDIT' ? (
-                          <select
-                            value={t.inflowCat || 'Parent Top-up'}
-                            onChange={(e) =>
-                              updateTransaction(
-                                t.id,
-                                { inflowCat: e.target.value as InflowCategory },
-                                rememberEdits
-                              )
-                            }
-                            className="bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200"
-                          >
-                            {INFLOW_TYPES.map((inf) => (
-                              <option key={inf} value={inf}>
-                                {inf}
-                              </option>
-                            ))}
-                          </select>
+                          <span className="text-emerald-400">{t.inflowCat}</span>
                         ) : (
                           <select
                             value={t.place}
@@ -1101,7 +1018,7 @@ export default function App() {
                                 rememberEdits
                               )
                             }
-                            className="bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200"
+                            className="bg-zinc-900 border border-zinc-800 rounded px-1 py-0.5 text-xs text-zinc-300"
                           >
                             {PLACES.map((p) => (
                               <option key={p} value={p}>
@@ -1111,7 +1028,7 @@ export default function App() {
                           </select>
                         )}
                       </td>
-                      <td className="py-2 px-3">
+                      <td className="py-2 px-2.5 font-sans">
                         <select
                           value={t.cat}
                           onChange={(e) =>
@@ -1121,7 +1038,7 @@ export default function App() {
                               rememberEdits
                             )
                           }
-                          className="bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-300"
+                          className="bg-zinc-900 border border-zinc-800 rounded px-1 py-0.5 text-xs text-zinc-300"
                         >
                           {CATEGORIES.map((c) => (
                             <option key={c} value={c}>
@@ -1130,47 +1047,18 @@ export default function App() {
                           ))}
                         </select>
                       </td>
-                      <td className="py-2 px-3">
-                        <select
-                          value={t.mode}
-                          onChange={(e) =>
-                            updateTransaction(
-                              t.id,
-                              { mode: e.target.value as PaymentMode },
-                              false
-                            )
-                          }
-                          className="bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs font-mono text-zinc-300"
-                        >
-                          {(['UPI', 'SU', 'ID', 'Cash', 'Card', 'Parents'] as PaymentMode[]).map(
-                            (m) => (
-                              <option key={m} value={m}>
-                                {m}
-                              </option>
-                            )
-                          )}
-                        </select>
+                      <td className="py-2 px-2.5 text-zinc-300">{t.mode}</td>
+                      <td
+                        className={`py-2 px-2.5 text-right font-medium whitespace-nowrap ${
+                          t.txType === 'CREDIT' ? 'text-emerald-400' : 'text-zinc-100'
+                        }`}
+                      >
+                        {t.txType === 'CREDIT' ? '+' : '-'}₹{fmt(t.price)}
                       </td>
-                      <td className="py-2 px-3 text-right font-mono font-medium whitespace-nowrap">
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={t.price}
-                          onChange={(e) =>
-                            updateTransaction(
-                              t.id,
-                              { price: parseFloat(e.target.value) || 0 },
-                              false
-                            )
-                          }
-                          className={`bg-transparent text-right font-mono w-20 focus:bg-zinc-900 focus:outline-none px-1 rounded ${t.txType === 'CREDIT' ? 'text-emerald-400' : 'text-zinc-100'
-                            }`}
-                        />
-                      </td>
-                      <td className="py-2 px-3 text-right">
+                      <td className="py-2 px-2 text-right">
                         <button
                           onClick={() => deleteTransaction(t.id)}
-                          className="text-zinc-600 hover:text-red-400 transition"
+                          className="text-zinc-600 hover:text-red-400"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -1182,92 +1070,50 @@ export default function App() {
             </div>
           </div>
         )}
-
-        {/* TAB 5: REAL-TIME CLOUD SYNC & HOSTING */}
-        {activeTab === 'cloud' && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="border border-zinc-800 rounded-lg p-5 space-y-4">
-              <div className="flex items-center gap-2">
-                <Cloud className="w-4 h-4 text-zinc-300" />
-                <h2 className="text-sm font-medium text-zinc-100">
-                  Supabase Real-Time Cloud Memory
-                </h2>
-              </div>
-              <p className="text-xs text-zinc-500">
-                Connect a free Supabase table so your transactions and merchant memory sync between your laptop and Android phone automatically.
-              </p>
-
-              <div className="space-y-2.5">
-                <input
-                  type="text"
-                  placeholder="Supabase Project URL (https://xyz.supabase.co)"
-                  value={cloudUrl}
-                  onChange={(e) => setCloudCredentials(e.target.value, cloudKey)}
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2 text-xs font-mono"
-                />
-                <input
-                  type="password"
-                  placeholder="Supabase Anon Public Key"
-                  value={cloudKey}
-                  onChange={(e) => setCloudCredentials(cloudUrl, e.target.value)}
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2 text-xs font-mono"
-                />
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={async () => {
-                    try {
-                      const msg = await pushToCloud();
-                      setSyncStatus(msg);
-                    } catch (e: any) {
-                      setSyncStatus(e.message);
-                    }
-                  }}
-                  className="bg-zinc-100 text-zinc-950 hover:bg-zinc-200 px-3.5 py-1.5 rounded-md text-xs font-medium transition"
-                >
-                  Push to Cloud
-                </button>
-                <button
-                  onClick={async () => {
-                    try {
-                      const msg = await pullFromCloud();
-                      setSyncStatus(msg);
-                    } catch (e: any) {
-                      setSyncStatus(e.message);
-                    }
-                  }}
-                  className="bg-zinc-800 text-zinc-200 hover:bg-zinc-700 px-3.5 py-1.5 rounded-md text-xs font-medium transition"
-                >
-                  Pull from Cloud
-                </button>
-                {lastSyncedAt && (
-                  <span className="text-[11px] text-zinc-500 font-mono">
-                    Last: {lastSyncedAt}
-                  </span>
-                )}
-              </div>
-              {syncStatus && <p className="text-xs text-zinc-400 font-mono">{syncStatus}</p>}
-            </div>
-
-            <div className="border border-zinc-800 rounded-lg p-5 space-y-3">
-              <h2 className="text-sm font-medium text-zinc-100">
-                1-Command Live Hosting (Vercel)
-              </h2>
-              <p className="text-xs text-zinc-500">
-                Run this single command in your Antigravity terminal to deploy a live HTTPS URL for your Android phone:
-              </p>
-              <pre className="bg-zinc-950 border border-zinc-800 rounded p-3 text-xs font-mono text-zinc-300 overflow-x-auto">
-                npx vercel --prod
-              </pre>
-              <p className="text-xs text-zinc-500">
-                Once deployed, open your `.vercel.app` link in Chrome on Android and tap{' '}
-                <strong className="text-zinc-300">Add to Home Screen</strong>.
-              </p>
-            </div>
-          </div>
-        )}
       </main>
+
+      {/* Fixed Bottom Navigation Bar for Mobile */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#09090b]/95 border-t border-zinc-800 backdrop-blur px-2 py-1.5 flex justify-around items-center">
+        <button
+          onClick={() => setActiveTab('overview')}
+          className={`flex flex-col items-center gap-1 py-1 px-3 rounded-md transition ${
+            activeTab === 'overview' ? 'text-zinc-100' : 'text-zinc-500'
+          }`}
+        >
+          <LayoutDashboard className="w-4 h-4" />
+          <span className="text-[10px] font-medium">Overview</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('log')}
+          className={`flex flex-col items-center gap-1 py-1 px-3 rounded-md transition ${
+            activeTab === 'log' ? 'text-zinc-100' : 'text-zinc-500'
+          }`}
+        >
+          <Zap className="w-4 h-4" />
+          <span className="text-[10px] font-medium">Quick Log</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('import')}
+          className={`flex flex-col items-center gap-1 py-1 px-3 rounded-md transition ${
+            activeTab === 'import' ? 'text-zinc-100' : 'text-zinc-500'
+          }`}
+        >
+          <Upload className="w-4 h-4" />
+          <span className="text-[10px] font-medium">Import</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('ledger')}
+          className={`flex flex-col items-center gap-1 py-1 px-3 rounded-md transition ${
+            activeTab === 'ledger' ? 'text-zinc-100' : 'text-zinc-500'
+          }`}
+        >
+          <ReceiptText className="w-4 h-4" />
+          <span className="text-[10px] font-medium">Ledger</span>
+        </button>
+      </nav>
     </div>
   );
 }

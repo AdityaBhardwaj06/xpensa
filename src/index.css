@@ -1,1 +1,19 @@
 @import "tailwindcss";
+
+html, body {
+  width: 100%;
+  max-width: 100vw;
+  overflow-x: hidden;
+  background-color: #09090b;
+  color: #f4f4f5;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Hide scrollbars for cleaner mobile feel while retaining swipe */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
