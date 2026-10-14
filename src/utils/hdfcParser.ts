@@ -2,13 +2,14 @@ import * as XLSX from 'xlsx';
 
 export interface RawParsedRow {
   tempId: string;
-  date: string; // YYYY-MM-DD
+  date: string;
   payee: string;
   note: string;
   debit: number;
   credit: number;
   txType: 'DEBIT' | 'CREDIT';
   amount: number;
+  detectedBankMode: 'UPI' | 'Card';
 }
 
 const DATE_REGEX = /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/;
@@ -26,11 +27,23 @@ function normalizeDate(raw: string): string | null {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-export function extractCleanPayeeFromHDFC(narration: string): { payee: string; note: string } {
+export function extractCleanPayeeFromHDFC(narration: string): {
+  payee: string;
+  note: string;
+  detectedBankMode: 'UPI' | 'Card';
+} {
   const raw = String(narration || '').replace(/\s+/g, ' ').trim();
+  const upper = raw.toUpperCase();
 
-  // HDFC UPI pattern: UPI-<PAYEE>-<VPA>-<IFSC>-<UTR>-<REMARK>
-  if (raw.toUpperCase().startsWith('UPI-')) {
+  // Detect Card vs UPI strictly from bank narration
+  const isCard =
+    upper.startsWith('POS ') ||
+    upper.startsWith('ECOM ') ||
+    upper.includes('DEBIT CARD') ||
+    upper.includes('ATM ');
+  const detectedBankMode: 'UPI' | 'Card' = isCard ? 'Card' : 'UPI';
+
+  if (upper.startsWith('UPI-')) {
     const parts = raw.split('-').map((p) => p.trim());
     const payee = parts[1] || 'UPI MERCHANT';
     const lastPart = parts[parts.length - 1] || '';
@@ -40,10 +53,9 @@ export function extractCleanPayeeFromHDFC(narration: string): { payee: string; n
       /^[A-Z]{4}0[A-Z0-9]{6}$/i.test(lastPart) ||
       lastPart.toUpperCase() === payee.toUpperCase();
     const note = isNoise ? '' : lastPart;
-    return { payee: payee.toUpperCase(), note };
+    return { payee: payee.toUpperCase(), note, detectedBankMode: 'UPI' };
   }
 
-  // Scrub IFSC, Account numbers, Card masks, and VPAs
   const scrubbed = raw
     .replace(/\b[A-Z]{4}0[A-Z0-9]{6}\b/g, '')
     .replace(/\b\d{8,18}\b/g, '')
@@ -52,7 +64,11 @@ export function extractCleanPayeeFromHDFC(narration: string): { payee: string; n
     .replace(/\s+/g, ' ')
     .trim();
 
-  return { payee: scrubbed.slice(0, 36).toUpperCase() || 'MERCHANT', note: '' };
+  return {
+    payee: scrubbed.slice(0, 36).toUpperCase() || 'MERCHANT',
+    note: '',
+    detectedBankMode,
+  };
 }
 
 function parseNumber(val: unknown): number {
@@ -65,14 +81,15 @@ function parseNumber(val: unknown): number {
 
 function parseRowsMatrix(rows: unknown[][]): RawParsedRow[] {
   const results: RawParsedRow[] = [];
-
-  // Dynamically detect column indices from header row if present
   let debitCol = 3;
   let creditCol = 4;
 
   for (let i = 0; i < Math.min(rows.length, 30); i++) {
     const lineStr = (rows[i] || []).map((c) => String(c).toLowerCase()).join('|');
-    if (lineStr.includes('narration') && (lineStr.includes('debit') || lineStr.includes('withdrawal'))) {
+    if (
+      lineStr.includes('narration') &&
+      (lineStr.includes('debit') || lineStr.includes('withdrawal'))
+    ) {
       (rows[i] || []).forEach((cell, idx) => {
         const c = String(cell).toLowerCase().trim();
         if (c.includes('debit') || c.includes('withdrawal')) debitCol = idx;
@@ -88,17 +105,15 @@ function parseRowsMatrix(rows: unknown[][]): RawParsedRow[] {
 
     const dateStr = normalizeDate(String(row[0]));
     if (!dateStr) continue;
-
-    // Filter out rows prior to August 2026 if older statements are accidentally included
-    if (dateStr < '2026-08-01' && dateStr < '2025-08-01') continue;
+    if (dateStr < '2025-08-01') continue;
 
     const narration = String(row[1] || '').trim();
-    if (!narration || /opening balance|closing balance|statement summary/i.test(narration)) continue;
+    if (!narration || /opening balance|closing balance|statement summary/i.test(narration))
+      continue;
 
     let debit = parseNumber(row[debitCol]);
     let credit = parseNumber(row[creditCol]);
 
-    // Fallback check if HDFC shifted columns due to Chq/Ref placement
     if (debit === 0 && credit === 0 && row.length >= 6) {
       const col2IsDate = normalizeDate(String(row[2])) !== null;
       debit = parseNumber(row[col2IsDate ? 3 : 4]);
@@ -107,7 +122,7 @@ function parseRowsMatrix(rows: unknown[][]): RawParsedRow[] {
 
     if (debit <= 0 && credit <= 0) continue;
 
-    const { payee, note } = extractCleanPayeeFromHDFC(narration);
+    const { payee, note, detectedBankMode } = extractCleanPayeeFromHDFC(narration);
     const txType = credit > 0 ? 'CREDIT' : 'DEBIT';
     const amount = credit > 0 ? credit : debit;
 
@@ -120,6 +135,7 @@ function parseRowsMatrix(rows: unknown[][]): RawParsedRow[] {
       credit,
       txType,
       amount,
+      detectedBankMode,
     });
   }
 
@@ -129,12 +145,10 @@ function parseRowsMatrix(rows: unknown[][]): RawParsedRow[] {
 export async function parseHDFCStatementFile(file: File): Promise<RawParsedRow[]> {
   const fileName = file.name.toLowerCase();
 
-  // Direct text parser for HDFC Delimited .txt / .csv exports
   if (fileName.endsWith('.txt') || fileName.endsWith('.csv')) {
     const text = await file.text();
     const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
 
-    // Detect delimiter: HDFC Delimited .txt typically uses comma (with padded spaces), tab, or tilde/pipe
     let delimiter: string | RegExp = ',';
     const sampleHeader = lines.find((l) => /narration/i.test(l)) || lines[0] || '';
     if (sampleHeader.includes('\t')) delimiter = '\t';
@@ -146,7 +160,6 @@ export async function parseHDFCStatementFile(file: File): Promise<RawParsedRow[]
     if (parsedFromText.length > 0) return parsedFromText;
   }
 
-  // Fallback to SheetJS for .xls / .xlsx
   const buffer = await file.arrayBuffer();
   const workbook = XLSX.read(buffer, { type: 'array', raw: true });
   const firstSheet = workbook.Sheets[workbook.SheetNames[0]];

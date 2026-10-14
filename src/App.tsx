@@ -8,32 +8,98 @@ import type {
 import { CAMPUS_PRESETS } from './types/expense';
 import { parseHDFCStatementFile } from './utils/hdfcParser';
 import type { RawParsedRow } from './utils/hdfcParser';
-import { Trash2, ArrowUpRight, ArrowDownLeft, Upload } from 'lucide-react';
+import {
+  Trash2,
+  ArrowUpRight,
+  ArrowDownLeft,
+  Upload,
+  Sparkles,
+  Cloud,
+  Search,
+} from 'lucide-react';
+
+const PLACES = [
+  'Amul',
+  'Vendi',
+  'Mess',
+  'Redi',
+  'ANC',
+  'FM',
+  'Cnot',
+  'Looters',
+  'Pitstop',
+  'IC',
+  'Akshay',
+  'Blinkit',
+  "Domino's",
+  'Amazon',
+  'Pilani / Local',
+  'Hostel / Campus',
+  'Other',
+];
+
+const CATEGORIES: ExpenseCategory[] = [
+  'Food',
+  'Essentials',
+  'Stationery',
+  'Entertainment',
+  'Gift, treat',
+  'Transportation',
+  'Health',
+  'Miscellaneous',
+];
+
+const INFLOW_TYPES: InflowCategory[] = [
+  'Parent Top-up',
+  'Relative / Gift',
+  'Split Reimbursement',
+  'Refund / Reversal',
+];
 
 export default function App() {
   const {
     transactions,
     quickMode,
+    openingBalance,
+    cloudUrl,
+    cloudKey,
+    lastSyncedAt,
     setQuickMode,
+    setOpeningBalance,
+    setCloudCredentials,
     addTransaction,
     bulkAddTransactions,
+    updateTransaction,
+    reapplyAliasesToExisting,
     deleteTransaction,
     clearAllTransactions,
     upsertAlias,
     matchPayeeToAlias,
+    pushToCloud,
+    pullFromCloud,
   } = useExpenseStore();
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'log' | 'import' | 'ledger'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'log' | 'import' | 'ledger' | 'cloud'>(
+    'overview'
+  );
   const [bucketScope, setBucketScope] = useState<'ALL' | 'OOP' | 'SU_ID' | 'PARENTS'>('ALL');
   const [modeFilter, setModeFilter] = useState<string>('ALL');
   const [monthFilter, setMonthFilter] = useState<string>('ALL');
   const [shorthand, setShorthand] = useState('');
 
+  // Ledger Search, Filter & Memory Toggle
+  const [ledgerSearch, setLedgerSearch] = useState('');
+  const [rememberEdits, setRememberEdits] = useState(true);
+  const [syncStatus, setSyncStatus] = useState('');
+
   // Importer State
   const [parsedRows, setParsedRows] = useState<RawParsedRow[]>([]);
   const [importError, setImportError] = useState<string>('');
   const [payeeOverrides, setPayeeOverrides] = useState<
-    Record<string, { place: string; cat: ExpenseCategory; mode: PaymentMode; inflowCat?: InflowCategory }>
+    Record<
+      string,
+      { place: string; cat: ExpenseCategory; mode: 'UPI' | 'Card'; inflowCat?: InflowCategory }
+    >
   >({});
 
   // Manual Inflow State
@@ -48,13 +114,14 @@ export default function App() {
     const merchant = params.get('merchant');
     const mode = (params.get('mode') as PaymentMode) || 'UPI';
     if (amt > 0 && merchant) {
-      const matched = matchPayeeToAlias(merchant, 'DEBIT');
+      const matched = matchPayeeToAlias(merchant, '', 'DEBIT');
       addTransaction({
         date: new Date().toISOString().slice(0, 10),
         name: matched.place !== 'Other' ? `${matched.place} · ${merchant}` : merchant,
+        rawPayee: merchant.toUpperCase(),
         price: amt,
         txType: 'DEBIT',
-        mode: mode || matched.mode,
+        mode,
         cat: matched.cat,
         subcat: matched.subcat,
         place: matched.place,
@@ -66,7 +133,6 @@ export default function App() {
     }
   }, [addTransaction, matchPayeeToAlias]);
 
-  // Distinct YYYY-MM months present in actual data
   const availableMonths = useMemo(() => {
     const set = new Set<string>();
     transactions.forEach((t) => {
@@ -75,7 +141,6 @@ export default function App() {
     return Array.from(set).sort((a, b) => b.localeCompare(a));
   }, [transactions]);
 
-  // Rolling Liquid Wallet Stats
   const walletStats = useMemo(() => {
     const credits = transactions.filter((t) => t.txType === 'CREDIT');
     const totalCredits = credits.reduce((acc, t) => acc + t.price, 0);
@@ -90,7 +155,7 @@ export default function App() {
       (t) => t.txType === 'DEBIT' && ['UPI', 'Cash', 'Card'].includes(t.mode)
     );
     const totalOOPDebits = oopDebits.reduce((acc, t) => acc + t.price, 0);
-    const liquidBalance = totalCredits - totalOOPDebits;
+    const liquidBalance = openingBalance + totalCredits - totalOOPDebits;
 
     const uniqueDays = new Set(oopDebits.map((t) => t.date)).size || 1;
     const dailyBurn = oopDebits.length > 0 ? totalOOPDebits / uniqueDays : 0;
@@ -106,7 +171,7 @@ export default function App() {
       dailyBurn,
       runwayDays,
     };
-  }, [transactions]);
+  }, [transactions, openingBalance]);
 
   const periodDebits = useMemo(() => {
     return transactions.filter((t) => {
@@ -139,7 +204,6 @@ export default function App() {
     return { oop, su, id, su_id: su + id, parents, activeTotal };
   }, [periodDebits, activeDebits]);
 
-  // Breakdown by Place and Category
   const breakdowns = useMemo(() => {
     const byPlace: Record<string, { sum: number; count: number }> = {};
     const byCat: Record<string, { sum: number; count: number }> = {};
@@ -167,6 +231,19 @@ export default function App() {
     };
   }, [activeDebits, periodDebits]);
 
+  const filteredLedger = useMemo(() => {
+    const q = ledgerSearch.trim().toLowerCase();
+    if (!q) return transactions;
+    return transactions.filter(
+      (t) =>
+        t.name.toLowerCase().includes(q) ||
+        t.place.toLowerCase().includes(q) ||
+        t.cat.toLowerCase().includes(q) ||
+        t.mode.toLowerCase().includes(q) ||
+        t.date.includes(q)
+    );
+  }, [transactions, ledgerSearch]);
+
   const handleShorthandSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!shorthand.trim()) return;
@@ -183,7 +260,7 @@ export default function App() {
     else if (/\bupi\b/.test(lower)) mode = 'UPI';
 
     const indiv = /\bsplit\b/.test(lower) ? 'Split' : 'Solo';
-    const matched = matchPayeeToAlias(shorthand, 'DEBIT');
+    const matched = matchPayeeToAlias(shorthand, shorthand, 'DEBIT');
 
     const cleanName =
       shorthand
@@ -194,6 +271,7 @@ export default function App() {
     addTransaction({
       date: new Date().toISOString().slice(0, 10),
       name: cleanName,
+      rawPayee: cleanName.toUpperCase(),
       price,
       txType: 'DEBIT',
       mode,
@@ -224,11 +302,12 @@ export default function App() {
       const initialOverrides: typeof payeeOverrides = {};
       rows.forEach((r) => {
         if (!initialOverrides[r.payee]) {
-          const matched = matchPayeeToAlias(r.payee, r.txType);
+          const matched = matchPayeeToAlias(r.payee, r.note, r.txType);
           initialOverrides[r.payee] = {
             place: matched.place,
             cat: matched.cat,
-            mode: matched.mode,
+            // Strictly UPI or Card for bank statements
+            mode: r.detectedBankMode,
             inflowCat: matched.inflowCat || 'Parent Top-up',
           };
         }
@@ -262,7 +341,6 @@ export default function App() {
         place: cfg.place,
         cat: cfg.cat,
         subcat: cfg.place,
-        mode: cfg.mode,
         txType: 'DEBIT',
         inflowCat: cfg.inflowCat,
       });
@@ -272,14 +350,16 @@ export default function App() {
       const cfg = payeeOverrides[r.payee] || {
         place: 'Other',
         cat: 'Food' as ExpenseCategory,
-        mode: 'UPI' as PaymentMode,
+        mode: r.detectedBankMode,
         inflowCat: 'Parent Top-up' as InflowCategory,
       };
       return {
         date: r.date,
         name: r.note ? `${r.payee} · ${r.note}` : r.payee,
+        rawPayee: r.payee,
         price: r.amount,
         txType: r.txType,
+        // Never allow SU, Cash, or Parents from a bank statement
         mode: cfg.mode,
         cat: cfg.cat,
         subcat: cfg.place,
@@ -301,9 +381,9 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#09090b] text-zinc-100 antialiased selection:bg-zinc-800">
-      {/* Minimal Top Header */}
+      {/* Top Header */}
       <header className="border-b border-zinc-800/80 bg-[#09090b]/95 sticky top-0 z-30 backdrop-blur">
-        <div className="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between">
+        <div className="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between">
           <div className="flex items-center gap-6">
             <span className="font-semibold tracking-tight text-sm text-zinc-100">
               LEDGER / BITS
@@ -315,6 +395,7 @@ export default function App() {
                   { id: 'log', label: 'Quick Entry' },
                   { id: 'import', label: 'Statement Import' },
                   { id: 'ledger', label: `Transactions (${transactions.length})` },
+                  { id: 'cloud', label: 'Cloud & Host' },
                 ] as const
               ).map((tab) => (
                 <button
@@ -335,7 +416,15 @@ export default function App() {
           <div className="hidden sm:flex items-center gap-4 text-xs font-mono">
             <div>
               <span className="text-zinc-500 mr-1.5">LIQUID BAL</span>
-              <span className="text-zinc-100 font-medium">₹{fmt(walletStats.liquidBalance)}</span>
+              <span
+                className={
+                  walletStats.liquidBalance < 0
+                    ? 'text-red-400 font-medium'
+                    : 'text-zinc-100 font-medium'
+                }
+              >
+                ₹{fmt(walletStats.liquidBalance)}
+              </span>
             </div>
             <span className="text-zinc-800">|</span>
             <div>
@@ -346,28 +435,11 @@ export default function App() {
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-4 py-6 space-y-6">
+      <main className="max-w-6xl mx-auto px-4 py-6 space-y-6">
         {/* TAB 1: OVERVIEW */}
         {activeTab === 'overview' && (
           <div className="space-y-6">
-            {transactions.length === 0 && (
-              <div className="border border-dashed border-zinc-800 rounded-lg p-8 text-center space-y-3">
-                <p className="text-sm text-zinc-300 font-medium">
-                  Your ledger is clean and ready for your August statement.
-                </p>
-                <p className="text-xs text-zinc-500 max-w-md mx-auto">
-                  Upload your delimited .txt HDFC statement in the Statement Import tab to populate your inflows and campus spend.
-                </p>
-                <button
-                  onClick={() => setActiveTab('import')}
-                  className="mt-2 inline-flex items-center gap-2 bg-zinc-100 text-zinc-950 px-3.5 py-1.5 rounded-md text-xs font-medium hover:bg-zinc-200 transition"
-                >
-                  <Upload className="w-3.5 h-3.5" /> Import HDFC .txt Statement
-                </button>
-              </div>
-            )}
-
-            {/* Filter Bar */}
+            {/* Filter Bar + Opening Balance Adjuster */}
             <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-zinc-800/80">
               <div className="inline-flex p-0.5 bg-zinc-900 border border-zinc-800 rounded-md">
                 {(
@@ -383,7 +455,7 @@ export default function App() {
                     onClick={() => setBucketScope(b.id)}
                     className={`px-3 py-1 text-xs font-medium rounded-sm transition ${
                       bucketScope === b.id
-                        ? 'bg-zinc-800 text-zinc-100 shadow-xs'
+                        ? 'bg-zinc-800 text-zinc-100'
                         : 'text-zinc-400 hover:text-zinc-200'
                     }`}
                   >
@@ -392,11 +464,21 @@ export default function App() {
                 ))}
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center gap-1.5 bg-zinc-900 border border-zinc-800 rounded-md px-2.5 py-1 text-xs">
+                  <span className="text-zinc-500">Aug 1 Opening Bal: ₹</span>
+                  <input
+                    type="number"
+                    value={openingBalance}
+                    onChange={(e) => setOpeningBalance(parseFloat(e.target.value) || 0)}
+                    className="w-20 bg-transparent font-mono text-zinc-200 focus:outline-none"
+                  />
+                </div>
+
                 <select
                   value={modeFilter}
                   onChange={(e) => setModeFilter(e.target.value)}
-                  className="bg-zinc-900 border border-zinc-800 rounded-md px-2.5 py-1 text-xs text-zinc-200 focus:outline-none focus:border-zinc-600"
+                  className="bg-zinc-900 border border-zinc-800 rounded-md px-2.5 py-1 text-xs text-zinc-200"
                 >
                   <option value="ALL">Mode: All</option>
                   <option value="UPI">UPI (GPay)</option>
@@ -410,7 +492,7 @@ export default function App() {
                 <select
                   value={monthFilter}
                   onChange={(e) => setMonthFilter(e.target.value)}
-                  className="bg-zinc-900 border border-zinc-800 rounded-md px-2.5 py-1 text-xs text-zinc-200 focus:outline-none focus:border-zinc-600"
+                  className="bg-zinc-900 border border-zinc-800 rounded-md px-2.5 py-1 text-xs text-zinc-200"
                 >
                   <option value="ALL">Period: All Time (Aug+)</option>
                   {availableMonths.map((m) => (
@@ -444,7 +526,7 @@ export default function App() {
                   ₹{fmt(bucketTotals.oop)}
                 </div>
                 <div className="text-xs text-zinc-500 mt-1 font-mono">
-                  Wallet left: ₹{fmt(walletStats.liquidBalance)}
+                  Liquid left: ₹{fmt(walletStats.liquidBalance)} ({walletStats.runwayDays}d)
                 </div>
               </div>
 
@@ -475,7 +557,6 @@ export default function App() {
 
             {/* 3-Column Analytical Breakdowns */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {/* By Payment Mode (Individual View) */}
               <div className="border border-zinc-800/90 rounded-lg p-4 space-y-3">
                 <div className="flex justify-between items-center border-b border-zinc-800/80 pb-2">
                   <h3 className="text-xs font-medium uppercase tracking-wider text-zinc-400">
@@ -484,9 +565,6 @@ export default function App() {
                   <span className="text-[11px] text-zinc-500">Click to isolate</span>
                 </div>
                 <div className="space-y-2.5">
-                  {breakdowns.modes.length === 0 && (
-                    <p className="text-xs text-zinc-600">No data in period</p>
-                  )}
                   {breakdowns.modes.map(([mode, info]) => {
                     const total = periodDebits.reduce((s, t) => s + t.price, 0) || 1;
                     const pct = Math.round((info.sum / total) * 100);
@@ -506,10 +584,7 @@ export default function App() {
                           </span>
                         </div>
                         <div className="w-full h-1 bg-zinc-900 rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-zinc-300"
-                            style={{ width: `${pct}%` }}
-                          />
+                          <div className="h-full bg-zinc-300" style={{ width: `${pct}%` }} />
                         </div>
                       </div>
                     );
@@ -517,19 +592,15 @@ export default function App() {
                 </div>
               </div>
 
-              {/* By Campus Place / Merchant */}
               <div className="border border-zinc-800/90 rounded-lg p-4 space-y-3">
                 <div className="flex justify-between items-center border-b border-zinc-800/80 pb-2">
                   <h3 className="text-xs font-medium uppercase tracking-wider text-zinc-400">
                     Top Places & Vendors
                   </h3>
-                  <span className="text-[11px] text-zinc-500">Active view</span>
+                  <span className="text-[11px] text-zinc-500">Click Other in Ledger to map</span>
                 </div>
                 <div className="space-y-2.5">
-                  {breakdowns.places.length === 0 && (
-                    <p className="text-xs text-zinc-600">No data in period</p>
-                  )}
-                  {breakdowns.places.slice(0, 7).map(([place, info]) => {
+                  {breakdowns.places.slice(0, 8).map(([place, info]) => {
                     const max = breakdowns.places[0]?.[1].sum || 1;
                     const pct = Math.round((info.sum / max) * 100);
                     return (
@@ -542,10 +613,7 @@ export default function App() {
                           <span className="font-mono text-zinc-300">₹{fmt(info.sum)}</span>
                         </div>
                         <div className="w-full h-1 bg-zinc-900 rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-zinc-400"
-                            style={{ width: `${pct}%` }}
-                          />
+                          <div className="h-full bg-zinc-400" style={{ width: `${pct}%` }} />
                         </div>
                       </div>
                     );
@@ -553,7 +621,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* By Basic Category */}
               <div className="border border-zinc-800/90 rounded-lg p-4 space-y-3">
                 <div className="flex justify-between items-center border-b border-zinc-800/80 pb-2">
                   <h3 className="text-xs font-medium uppercase tracking-wider text-zinc-400">
@@ -562,9 +629,6 @@ export default function App() {
                   <span className="text-[11px] text-zinc-500">Active view</span>
                 </div>
                 <div className="space-y-2.5">
-                  {breakdowns.categories.length === 0 && (
-                    <p className="text-xs text-zinc-600">No data in period</p>
-                  )}
                   {breakdowns.categories.map(([cat, info]) => {
                     const total = bucketTotals.activeTotal || 1;
                     const pct = Math.round((info.sum / total) * 100);
@@ -580,10 +644,7 @@ export default function App() {
                           </span>
                         </div>
                         <div className="w-full h-1 bg-zinc-900 rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-zinc-400"
-                            style={{ width: `${pct}%` }}
-                          />
+                          <div className="h-full bg-zinc-400" style={{ width: `${pct}%` }} />
                         </div>
                       </div>
                     );
@@ -597,15 +658,12 @@ export default function App() {
         {/* TAB 2: QUICK ENTRY */}
         {activeTab === 'log' && (
           <div className="space-y-6">
-            {/* Command Bar */}
             <form
               onSubmit={handleShorthandSubmit}
               className="border border-zinc-800 rounded-lg p-4 bg-zinc-900/40 space-y-2"
             >
               <div className="flex justify-between items-center">
-                <label className="text-xs font-medium text-zinc-300">
-                  Command Entry
-                </label>
+                <label className="text-xs font-medium text-zinc-300">Command Entry</label>
                 <span className="text-[11px] text-zinc-500 font-mono">
                   Syntax: [item] [amount] [su|upi|id|cash] [split]
                 </span>
@@ -626,11 +684,10 @@ export default function App() {
               </div>
             </form>
 
-            {/* Mode + Campus Presets */}
             <div className="border border-zinc-800 rounded-lg p-4 space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="text-xs font-medium text-zinc-400 uppercase tracking-wider">
-                  Default Payment Mode
+                  Default Payment Mode (Use SU for SU App QR scans)
                 </span>
                 <div className="inline-flex p-0.5 bg-zinc-900 border border-zinc-800 rounded-md">
                   {(['UPI', 'SU', 'ID', 'Cash', 'Card', 'Parents'] as PaymentMode[]).map((m) => (
@@ -657,6 +714,7 @@ export default function App() {
                       addTransaction({
                         date: new Date().toISOString().slice(0, 10),
                         name: p.name,
+                        rawPayee: p.place.toUpperCase(),
                         price: p.price,
                         txType: 'DEBIT',
                         mode: quickMode,
@@ -685,7 +743,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Record Inflow (Parents / Relative Gift) */}
             <div className="border border-zinc-800 rounded-lg p-4 space-y-3">
               <div className="text-xs font-medium text-zinc-400 uppercase tracking-wider">
                 Record Inflow (Parent Top-Up / Relative Gift / Split Return)
@@ -703,10 +760,11 @@ export default function App() {
                   onChange={(e) => setInflowSource(e.target.value as InflowCategory)}
                   className="bg-[#09090b] border border-zinc-800 rounded-md px-3 py-1.5 text-xs"
                 >
-                  <option value="Parent Top-up">Parent Top-up</option>
-                  <option value="Relative / Gift">Relative / Gift</option>
-                  <option value="Split Reimbursement">Split Reimbursement</option>
-                  <option value="Refund / Reversal">Refund / Reversal</option>
+                  {INFLOW_TYPES.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
                 </select>
                 <input
                   type="text"
@@ -745,19 +803,17 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 3: HDFC DELIMITED TXT / EXCEL IMPORTER */}
+        {/* TAB 3: HDFC STATEMENT IMPORTER (STRICTLY UPI / CARD) */}
         {activeTab === 'import' && (
           <div className="space-y-6">
             <div className="border border-zinc-800 rounded-lg p-5 space-y-3">
-              <div className="flex justify-between items-start">
-                <div>
-                  <h2 className="text-sm font-medium text-zinc-100">
-                    HDFC Delimited (.txt / .csv / .xls) & SU Statement Importer
-                  </h2>
-                  <p className="text-xs text-zinc-500 mt-0.5">
-                    Parsed locally in browser memory. Account numbers, IFSC codes, and closing balances are automatically stripped.
-                  </p>
-                </div>
+              <div>
+                <h2 className="text-sm font-medium text-zinc-100">
+                  HDFC Bank Statement Importer (.txt, .csv, .xls)
+                </h2>
+                <p className="text-xs text-zinc-500 mt-0.5">
+                  Bank statements only permit UPI or Debit Card modes (never SU, Cash, or Parents).
+                </p>
               </div>
 
               <input
@@ -766,10 +822,7 @@ export default function App() {
                 onChange={handleFileUpload}
                 className="block w-full text-xs text-zinc-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border file:border-zinc-700 file:bg-zinc-900 file:text-zinc-200 file:font-medium hover:file:bg-zinc-800 cursor-pointer"
               />
-
-              {importError && (
-                <p className="text-xs text-red-400 font-mono">{importError}</p>
-              )}
+              {importError && <p className="text-xs text-red-400 font-mono">{importError}</p>}
             </div>
 
             {uniquePayeeGroups.length > 0 && (
@@ -779,15 +832,12 @@ export default function App() {
                     <h3 className="text-xs font-medium uppercase tracking-wider text-zinc-300">
                       Unique Payee Mapping ({uniquePayeeGroups.length} payees · {parsedRows.length} rows)
                     </h3>
-                    <p className="text-xs text-zinc-500 mt-0.5">
-                      Assign each payee once below to categorize all matching transactions automatically.
-                    </p>
                   </div>
                   <button
                     onClick={commitBulkImport}
                     className="bg-zinc-100 text-zinc-950 hover:bg-zinc-200 px-4 py-1.5 rounded-md font-medium text-xs transition"
                   >
-                    Import {parsedRows.length} Transactions
+                    Import {parsedRows.length} Bank Rows
                   </button>
                 </div>
 
@@ -801,7 +851,7 @@ export default function App() {
                         <th className="py-2.5 px-3 text-right">Total (₹)</th>
                         <th className="py-2.5 px-3">Spot / Inflow Type</th>
                         <th className="py-2.5 px-3">Category</th>
-                        <th className="py-2.5 px-3">Mode</th>
+                        <th className="py-2.5 px-3">Bank Mode</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-800/60">
@@ -845,10 +895,11 @@ export default function App() {
                                   }
                                   className="bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs"
                                 >
-                                  <option value="Parent Top-up">Parent Top-up</option>
-                                  <option value="Relative / Gift">Relative / Gift</option>
-                                  <option value="Split Reimbursement">Split Reimbursement</option>
-                                  <option value="Refund / Reversal">Refund / Reversal</option>
+                                  {INFLOW_TYPES.map((t) => (
+                                    <option key={t} value={t}>
+                                      {t}
+                                    </option>
+                                  ))}
                                 </select>
                               ) : (
                                 <select
@@ -861,24 +912,7 @@ export default function App() {
                                   }
                                   className="bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs"
                                 >
-                                  {[
-                                    'Amul',
-                                    'Vendi',
-                                    'Mess',
-                                    'Redi',
-                                    'ANC',
-                                    'FM',
-                                    'Cnot',
-                                    'Looters',
-                                    'Pitstop',
-                                    'IC',
-                                    'Akshay',
-                                    "Domino's",
-                                    'Amazon',
-                                    'Pilani / Local',
-                                    'Hostel / Campus',
-                                    'Other',
-                                  ].map((spot) => (
+                                  {PLACES.map((spot) => (
                                     <option key={spot} value={spot}>
                                       {spot}
                                     </option>
@@ -897,16 +931,7 @@ export default function App() {
                                 }
                                 className="bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs"
                               >
-                                {[
-                                  'Food',
-                                  'Essentials',
-                                  'Stationery',
-                                  'Entertainment',
-                                  'Gift, treat',
-                                  'Transportation',
-                                  'Health',
-                                  'Miscellaneous',
-                                ].map((c) => (
+                                {CATEGORIES.map((c) => (
                                   <option key={c} value={c}>
                                     {c}
                                   </option>
@@ -919,16 +944,16 @@ export default function App() {
                                 onChange={(e) =>
                                   setPayeeOverrides((prev) => ({
                                     ...prev,
-                                    [g.payee]: { ...cfg, mode: e.target.value as PaymentMode },
+                                    [g.payee]: {
+                                      ...cfg,
+                                      mode: e.target.value as 'UPI' | 'Card',
+                                    },
                                   }))
                                 }
                                 className="bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs font-mono"
                               >
                                 <option value="UPI">UPI</option>
-                                <option value="SU">SU</option>
-                                <option value="ID">ID</option>
                                 <option value="Card">Card</option>
-                                <option value="Parents">Parents</option>
                               </select>
                             </td>
                           </tr>
@@ -942,25 +967,50 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 4: FULL LEDGER */}
+        {/* TAB 4: EDITABLE TRANSACTIONS LEDGER WITH RETROSPECTIVE MEMORY */}
         {activeTab === 'ledger' && (
-          <div className="space-y-3">
-            <div className="flex justify-between items-center">
-              <span className="text-xs text-zinc-500 font-mono">
-                Showing {transactions.length} entries
-              </span>
-              {transactions.length > 0 && (
+          <div className="space-y-4">
+            <div className="flex flex-wrap justify-between items-center gap-3 bg-zinc-900/40 border border-zinc-800 rounded-lg p-3">
+              <div className="flex items-center gap-2 flex-1 min-w-[220px]">
+                <Search className="w-3.5 h-3.5 text-zinc-500" />
+                <input
+                  value={ledgerSearch}
+                  onChange={(e) => setLedgerSearch(e.target.value)}
+                  placeholder="Search merchant, note, place, or date..."
+                  className="bg-transparent text-xs text-zinc-100 placeholder:text-zinc-600 focus:outline-none w-full"
+                />
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                <label className="flex items-center gap-1.5 text-xs text-zinc-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={rememberEdits}
+                    onChange={(e) => setRememberEdits(e.target.checked)}
+                    className="rounded border-zinc-700"
+                  />
+                  <span>Auto-update & remember all from same payee when edited</span>
+                </label>
+
                 <button
-                  onClick={() => {
-                    if (confirm('Clear all transactions from local storage?')) {
-                      clearAllTransactions();
-                    }
-                  }}
-                  className="text-xs text-zinc-500 hover:text-red-400 transition"
+                  onClick={reapplyAliasesToExisting}
+                  className="inline-flex items-center gap-1.5 bg-zinc-100 text-zinc-950 hover:bg-zinc-200 px-3 py-1 rounded text-xs font-medium transition"
+                  title="Fixes accidental SU tags on bank rows and maps Vending Brothers, Namonarayan, etc."
                 >
-                  Clear All Data
+                  <Sparkles className="w-3.5 h-3.5" /> Re-Run Smart Merchant Rules
                 </button>
-              )}
+
+                {transactions.length > 0 && (
+                  <button
+                    onClick={() => {
+                      if (confirm('Clear all transactions?')) clearAllTransactions();
+                    }}
+                    className="text-xs text-zinc-500 hover:text-red-400 transition"
+                  >
+                    Clear All
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="border border-zinc-800 rounded-lg overflow-x-auto">
@@ -968,41 +1018,139 @@ export default function App() {
                 <thead className="border-b border-zinc-800 text-zinc-500 font-mono uppercase text-[11px] bg-zinc-900/40">
                   <tr>
                     <th className="py-2.5 px-3">Date</th>
-                    <th className="py-2.5 px-3">Description</th>
-                    <th className="py-2.5 px-3">Spot / Source</th>
-                    <th className="py-2.5 px-3">Category</th>
-                    <th className="py-2.5 px-3">Mode</th>
-                    <th className="py-2.5 px-3 text-right">Amount</th>
+                    <th className="py-2.5 px-3">Description (Editable)</th>
+                    <th className="py-2.5 px-3">Spot / Source (Editable)</th>
+                    <th className="py-2.5 px-3">Category (Editable)</th>
+                    <th className="py-2.5 px-3">Mode (Editable)</th>
+                    <th className="py-2.5 px-3 text-right">Amount (₹)</th>
                     <th className="py-2.5 px-3"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-800/60">
-                  {transactions.map((t) => (
+                  {filteredLedger.map((t) => (
                     <tr key={t.id} className="hover:bg-zinc-900/30">
-                      <td className="py-2.5 px-3 font-mono text-zinc-400 whitespace-nowrap">
-                        {t.date}
+                      <td className="py-2 px-3 font-mono text-zinc-400 whitespace-nowrap">
+                        <input
+                          type="date"
+                          value={t.date}
+                          onChange={(e) => updateTransaction(t.id, { date: e.target.value }, false)}
+                          className="bg-transparent font-mono text-xs text-zinc-400 focus:outline-none"
+                        />
                       </td>
-                      <td className="py-2.5 px-3 font-medium text-zinc-200 flex items-center gap-1.5">
+                      <td className="py-2 px-3 font-medium text-zinc-200">
+                        <div className="flex items-center gap-1.5">
+                          {t.txType === 'CREDIT' ? (
+                            <ArrowDownLeft className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                          ) : (
+                            <ArrowUpRight className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+                          )}
+                          <input
+                            type="text"
+                            value={t.name}
+                            onChange={(e) =>
+                              updateTransaction(t.id, { name: e.target.value }, false)
+                            }
+                            className="bg-transparent text-zinc-200 focus:bg-zinc-900 focus:outline-none px-1 py-0.5 rounded w-full"
+                          />
+                        </div>
+                      </td>
+                      <td className="py-2 px-3">
                         {t.txType === 'CREDIT' ? (
-                          <ArrowDownLeft className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                          <select
+                            value={t.inflowCat || 'Parent Top-up'}
+                            onChange={(e) =>
+                              updateTransaction(
+                                t.id,
+                                { inflowCat: e.target.value as InflowCategory },
+                                rememberEdits
+                              )
+                            }
+                            className="bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200"
+                          >
+                            {INFLOW_TYPES.map((inf) => (
+                              <option key={inf} value={inf}>
+                                {inf}
+                              </option>
+                            ))}
+                          </select>
                         ) : (
-                          <ArrowUpRight className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+                          <select
+                            value={t.place}
+                            onChange={(e) =>
+                              updateTransaction(
+                                t.id,
+                                { place: e.target.value },
+                                rememberEdits
+                              )
+                            }
+                            className="bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200"
+                          >
+                            {PLACES.map((p) => (
+                              <option key={p} value={p}>
+                                {p}
+                              </option>
+                            ))}
+                          </select>
                         )}
-                        <span>{t.name}</span>
                       </td>
-                      <td className="py-2.5 px-3 text-zinc-400">
-                        {t.txType === 'CREDIT' ? t.inflowCat : t.place}
+                      <td className="py-2 px-3">
+                        <select
+                          value={t.cat}
+                          onChange={(e) =>
+                            updateTransaction(
+                              t.id,
+                              { cat: e.target.value as ExpenseCategory },
+                              rememberEdits
+                            )
+                          }
+                          className="bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-300"
+                        >
+                          {CATEGORIES.map((c) => (
+                            <option key={c} value={c}>
+                              {c}
+                            </option>
+                          ))}
+                        </select>
                       </td>
-                      <td className="py-2.5 px-3 text-zinc-500">{t.cat}</td>
-                      <td className="py-2.5 px-3 font-mono text-zinc-300">{t.mode}</td>
-                      <td
-                        className={`py-2.5 px-3 text-right font-mono font-medium whitespace-nowrap ${
-                          t.txType === 'CREDIT' ? 'text-emerald-400' : 'text-zinc-100'
-                        }`}
-                      >
-                        {t.txType === 'CREDIT' ? '+' : '-'}₹{fmt(t.price)}
+                      <td className="py-2 px-3">
+                        <select
+                          value={t.mode}
+                          onChange={(e) =>
+                            updateTransaction(
+                              t.id,
+                              { mode: e.target.value as PaymentMode },
+                              false
+                            )
+                          }
+                          className="bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs font-mono text-zinc-300"
+                        >
+                          {(['UPI', 'SU', 'ID', 'Cash', 'Card', 'Parents'] as PaymentMode[]).map(
+                            (m) => (
+                              <option key={m} value={m}>
+                                {m}
+                              </option>
+                            )
+                          )}
+                        </select>
                       </td>
-                      <td className="py-2.5 px-3 text-right">
+                      <td className="py-2 px-3 text-right font-mono font-medium whitespace-nowrap">
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={t.price}
+                          onChange={(e) =>
+                            updateTransaction(
+                              t.id,
+                              { price: parseFloat(e.target.value) || 0 },
+                              false
+                            )
+                          }
+                          className={`bg-transparent text-right font-mono w-20 focus:bg-zinc-900 focus:outline-none px-1 rounded ${
+                            t.txType === 'CREDIT' ? 'text-emerald-400' : 'text-zinc-100'
+                          }`}
+                        />
+                      </td>
+                      <td className="py-2 px-3 text-right">
                         <button
                           onClick={() => deleteTransaction(t.id)}
                           className="text-zinc-600 hover:text-red-400 transition"
@@ -1014,6 +1162,91 @@ export default function App() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 5: REAL-TIME CLOUD SYNC & HOSTING */}
+        {activeTab === 'cloud' && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="border border-zinc-800 rounded-lg p-5 space-y-4">
+              <div className="flex items-center gap-2">
+                <Cloud className="w-4 h-4 text-zinc-300" />
+                <h2 className="text-sm font-medium text-zinc-100">
+                  Supabase Real-Time Cloud Memory
+                </h2>
+              </div>
+              <p className="text-xs text-zinc-500">
+                Connect a free Supabase table so your transactions and merchant memory sync between your laptop and Android phone automatically.
+              </p>
+
+              <div className="space-y-2.5">
+                <input
+                  type="text"
+                  placeholder="Supabase Project URL (https://xyz.supabase.co)"
+                  value={cloudUrl}
+                  onChange={(e) => setCloudCredentials(e.target.value, cloudKey)}
+                  className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2 text-xs font-mono"
+                />
+                <input
+                  type="password"
+                  placeholder="Supabase Anon Public Key"
+                  value={cloudKey}
+                  onChange={(e) => setCloudCredentials(cloudUrl, e.target.value)}
+                  className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2 text-xs font-mono"
+                />
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={async () => {
+                    try {
+                      const msg = await pushToCloud();
+                      setSyncStatus(msg);
+                    } catch (e: any) {
+                      setSyncStatus(e.message);
+                    }
+                  }}
+                  className="bg-zinc-100 text-zinc-950 hover:bg-zinc-200 px-3.5 py-1.5 rounded-md text-xs font-medium transition"
+                >
+                  Push to Cloud
+                </button>
+                <button
+                  onClick={async () => {
+                    try {
+                      const msg = await pullFromCloud();
+                      setSyncStatus(msg);
+                    } catch (e: any) {
+                      setSyncStatus(e.message);
+                    }
+                  }}
+                  className="bg-zinc-800 text-zinc-200 hover:bg-zinc-700 px-3.5 py-1.5 rounded-md text-xs font-medium transition"
+                >
+                  Pull from Cloud
+                </button>
+                {lastSyncedAt && (
+                  <span className="text-[11px] text-zinc-500 font-mono">
+                    Last: {lastSyncedAt}
+                  </span>
+                )}
+              </div>
+              {syncStatus && <p className="text-xs text-zinc-400 font-mono">{syncStatus}</p>}
+            </div>
+
+            <div className="border border-zinc-800 rounded-lg p-5 space-y-3">
+              <h2 className="text-sm font-medium text-zinc-100">
+                1-Command Live Hosting (Vercel)
+              </h2>
+              <p className="text-xs text-zinc-500">
+                Run this single command in your Antigravity terminal to deploy a live HTTPS URL for your Android phone:
+              </p>
+              <pre className="bg-zinc-950 border border-zinc-800 rounded p-3 text-xs font-mono text-zinc-300 overflow-x-auto">
+                npx vercel --prod
+              </pre>
+              <p className="text-xs text-zinc-500">
+                Once deployed, open your `.vercel.app` link in Chrome on Android and tap{' '}
+                <strong className="text-zinc-300">Add to Home Screen</strong>.
+              </p>
             </div>
           </div>
         )}
