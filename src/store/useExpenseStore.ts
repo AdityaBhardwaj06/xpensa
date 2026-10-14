@@ -7,18 +7,24 @@ import type {
   ExpenseCategory,
 } from '../types/expense';
 import { DEFAULT_ALIASES, SEED_TRANSACTIONS } from '../types/expense';
+import { supabase, isCloudConfigured } from '../lib/supabase';
+
+const SYNC_ROW_ID = 'aditya_main';
+let isApplyingRemoteUpdate = false;
+let syncDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 interface ExpenseState {
   transactions: Transaction[];
   aliases: MerchantAlias[];
   quickMode: PaymentMode;
   openingBalance: number;
-  cloudUrl: string;
-  cloudKey: string;
+  syncState: 'offline' | 'syncing' | 'live' | 'error';
   lastSyncedAt: string | null;
+  syncError: string | null;
+  initRealtimeSync: () => () => void;
+  syncNowToCloud: () => Promise<void>;
   setQuickMode: (mode: PaymentMode) => void;
   setOpeningBalance: (bal: number) => void;
-  setCloudCredentials: (url: string, key: string) => void;
   addTransaction: (tx: Omit<Transaction, 'id'>) => void;
   bulkAddTransactions: (txs: Omit<Transaction, 'id'>[]) => void;
   updateTransaction: (
@@ -31,8 +37,14 @@ interface ExpenseState {
   clearAllTransactions: () => void;
   upsertAlias: (alias: MerchantAlias) => void;
   matchPayeeToAlias: (payee: string, note: string, txType: 'DEBIT' | 'CREDIT') => MerchantAlias;
-  pushToCloud: () => Promise<string>;
-  pullFromCloud: () => Promise<string>;
+}
+
+function scheduleCloudPush(get: () => ExpenseState) {
+  if (!isCloudConfigured || !supabase || isApplyingRemoteUpdate) return;
+  if (syncDebounceTimer) clearTimeout(syncDebounceTimer);
+  syncDebounceTimer = setTimeout(() => {
+    void get().syncNowToCloud();
+  }, 350);
 }
 
 export const useExpenseStore = create<ExpenseState>()(
@@ -41,24 +53,143 @@ export const useExpenseStore = create<ExpenseState>()(
       transactions: SEED_TRANSACTIONS,
       aliases: DEFAULT_ALIASES,
       quickMode: 'UPI',
-      openingBalance: 20000, // Default Aug 1 opening bank balance (editable in UI)
-      cloudUrl: '',
-      cloudKey: '',
+      openingBalance: 20000,
+      syncState: isCloudConfigured ? 'syncing' : 'offline',
       lastSyncedAt: null,
+      syncError: null,
+
+      syncNowToCloud: async () => {
+        if (!supabase || isApplyingRemoteUpdate) return;
+        const { transactions, aliases, openingBalance } = get();
+        set({ syncState: 'syncing', syncError: null });
+
+        const nowIso = new Date().toISOString();
+        const { error } = await supabase.from('ledger_sync').upsert(
+          {
+            id: SYNC_ROW_ID,
+            payload: { transactions, aliases, openingBalance, updatedAt: nowIso },
+            updated_at: nowIso,
+          },
+          { onConflict: 'id' }
+        );
+
+        if (error) {
+          set({ syncState: 'error', syncError: error.message });
+        } else {
+          set({
+            syncState: 'live',
+            lastSyncedAt: new Date().toLocaleTimeString(),
+            syncError: null,
+          });
+        }
+      },
+
+      initRealtimeSync: () => {
+        if (!supabase) {
+          set({ syncState: 'offline' });
+          return () => {};
+        }
+
+        // 1. Initial Pull or Seed on App Boot
+        (async () => {
+          set({ syncState: 'syncing' });
+          const { data, error } = await supabase
+            .from('ledger_sync')
+            .select('payload, updated_at')
+            .eq('id', SYNC_ROW_ID)
+            .maybeSingle();
+
+          if (error) {
+            set({ syncState: 'error', syncError: error.message });
+            return;
+          }
+
+          const remoteTx = data?.payload?.transactions || [];
+          const localTx = get().transactions;
+
+          // If cloud has data and local is empty (e.g. opening on your phone for the first time), pull cloud data
+          if (remoteTx.length > 0 && localTx.length === 0) {
+            isApplyingRemoteUpdate = true;
+            set({
+              transactions: remoteTx,
+              aliases: data.payload.aliases || DEFAULT_ALIASES,
+              openingBalance: data.payload.openingBalance ?? 20000,
+              syncState: 'live',
+              lastSyncedAt: new Date().toLocaleTimeString(),
+            });
+            isApplyingRemoteUpdate = false;
+          } else if (localTx.length > 0 && remoteTx.length === 0) {
+            // If laptop has your 290 imported rows and cloud is empty, push laptop data to cloud automatically
+            await get().syncNowToCloud();
+          } else if (data?.payload) {
+            // Both exist: take remote if it has more or newer records
+            isApplyingRemoteUpdate = true;
+            set({
+              transactions: remoteTx.length >= localTx.length ? remoteTx : localTx,
+              aliases: data.payload.aliases || get().aliases,
+              openingBalance: data.payload.openingBalance ?? get().openingBalance,
+              syncState: 'live',
+              lastSyncedAt: new Date().toLocaleTimeString(),
+            });
+            isApplyingRemoteUpdate = false;
+            if (localTx.length > remoteTx.length) {
+              await get().syncNowToCloud();
+            }
+          } else {
+            set({ syncState: 'live' });
+          }
+        })();
+
+        // 2. Subscribe to Live Postgres WebSocket Changes
+        const channel = supabase
+          .channel('realtime_ledger_sync')
+          .on(
+            'postgres_changes',
+            {
+              event: '*',
+              schema: 'public',
+              table: 'ledger_sync',
+              filter: `id=eq.${SYNC_ROW_ID}`,
+            },
+            (payload) => {
+              const newRecord = payload.new as { payload?: any } | undefined;
+              if (!newRecord?.payload) return;
+              isApplyingRemoteUpdate = true;
+              set({
+                transactions: newRecord.payload.transactions || [],
+                aliases: newRecord.payload.aliases || DEFAULT_ALIASES,
+                openingBalance: newRecord.payload.openingBalance ?? 20000,
+                syncState: 'live',
+                lastSyncedAt: new Date().toLocaleTimeString(),
+              });
+              isApplyingRemoteUpdate = false;
+            }
+          )
+          .subscribe();
+
+        return () => {
+          void supabase.removeChannel(channel);
+        };
+      },
 
       setQuickMode: (mode) => set({ quickMode: mode }),
-      setOpeningBalance: (openingBalance) => set({ openingBalance }),
-      setCloudCredentials: (cloudUrl, cloudKey) => set({ cloudUrl, cloudKey }),
 
-      addTransaction: (tx) =>
+      setOpeningBalance: (openingBalance) => {
+        set({ openingBalance });
+        scheduleCloudPush(get);
+      },
+
+      addTransaction: (tx) => {
         set((state) => ({
           transactions: [
             { ...tx, id: `tx_${Date.now()}_${Math.random().toString(36).slice(2, 6)}` },
             ...state.transactions,
           ],
-        })),
+        }));
+        scheduleCloudPush(get);
+      },
 
-      bulkAddTransactions: (txs) =>
+      bulkAddTransactions: (txs) => {
         set((state) => ({
           transactions: [
             ...txs.map((t, idx) => ({
@@ -67,9 +198,11 @@ export const useExpenseStore = create<ExpenseState>()(
             })),
             ...state.transactions,
           ].sort((a, b) => b.date.localeCompare(a.date)),
-        })),
+        }));
+        scheduleCloudPush(get);
+      },
 
-      updateTransaction: (id, patch, rememberForPayee = false) =>
+      updateTransaction: (id, patch, rememberForPayee = false) => {
         set((state) => {
           const target = state.transactions.find((t) => t.id === id);
           if (!target) return state;
@@ -95,9 +228,7 @@ export const useExpenseStore = create<ExpenseState>()(
           }
 
           const updatedTx = state.transactions.map((t) => {
-            if (t.id === id) {
-              return { ...t, ...patch };
-            }
+            if (t.id === id) return { ...t, ...patch };
             if (rememberForPayee && payeeKey) {
               const tKey = (t.rawPayee || t.name.split('·')[0] || '').trim().toUpperCase();
               if (tKey === payeeKey && t.txType === target.txType) {
@@ -113,10 +244,11 @@ export const useExpenseStore = create<ExpenseState>()(
           });
 
           return { transactions: updatedTx, aliases: updatedAliases };
-        }),
+        });
+        scheduleCloudPush(get);
+      },
 
-      // Retroactively fixes existing imported HDFC rows (removes accidental SU mode & maps campus vendors)
-      reapplyAliasesToExisting: () =>
+      reapplyAliasesToExisting: () => {
         set((state) => {
           const mergedAliases = [
             ...DEFAULT_ALIASES,
@@ -130,7 +262,6 @@ export const useExpenseStore = create<ExpenseState>()(
             const rawNote = (t.name.split('·')[1] || t.note || '').trim().toUpperCase();
             const found = mergedAliases.find((a) => rawPayee.includes(a.key.toUpperCase()));
 
-            // If this came from the HDFC statement import, it CANNOT be SU, Cash, or Parents
             const fixedMode: PaymentMode =
               t.mode === 'SU' && t.name.includes('·') ? 'UPI' : t.mode;
 
@@ -144,7 +275,6 @@ export const useExpenseStore = create<ExpenseState>()(
               };
             }
 
-            // Note-based smart fallback (e.g. CHAACH / YOGHURT / PEN)
             if (t.txType === 'DEBIT') {
               if (/YOGHURT|CHAACH|LASSI|AMUL/i.test(rawNote)) {
                 return { ...t, mode: fixedMode, place: 'Amul', cat: 'Food' as ExpenseCategory };
@@ -163,22 +293,31 @@ export const useExpenseStore = create<ExpenseState>()(
           });
 
           return { transactions: fixed, aliases: mergedAliases };
-        }),
+        });
+        scheduleCloudPush(get);
+      },
 
-      deleteTransaction: (id) =>
+      deleteTransaction: (id) => {
         set((state) => ({
           transactions: state.transactions.filter((t) => t.id !== id),
-        })),
+        }));
+        scheduleCloudPush(get);
+      },
 
-      clearAllTransactions: () => set({ transactions: [] }),
+      clearAllTransactions: () => {
+        set({ transactions: [] });
+        scheduleCloudPush(get);
+      },
 
-      upsertAlias: (alias) =>
+      upsertAlias: (alias) => {
         set((state) => {
           const filtered = state.aliases.filter(
             (a) => a.key.toUpperCase() !== alias.key.toUpperCase()
           );
           return { aliases: [alias, ...filtered] };
-        }),
+        });
+        scheduleCloudPush(get);
+      },
 
       matchPayeeToAlias: (payee, note, txType) => {
         const upperPayee = payee.toUpperCase();
@@ -198,7 +337,6 @@ export const useExpenseStore = create<ExpenseState>()(
           };
         }
 
-        // Check UPI note keywords if payee is an unfamiliar personal name
         if (/YOGHURT|CHAACH|LASSI|CURD/i.test(upperNote)) {
           return { key: upperPayee, place: 'Amul', cat: 'Food', subcat: 'Dairy', txType: 'DEBIT' };
         }
@@ -219,58 +357,6 @@ export const useExpenseStore = create<ExpenseState>()(
           subcat: 'Campus',
           txType: 'DEBIT',
         };
-      },
-
-      // Cloud Sync via Supabase REST API (Zero extra SDK dependencies needed)
-      pushToCloud: async () => {
-        const { cloudUrl, cloudKey, transactions, aliases, openingBalance } = get();
-        if (!cloudUrl || !cloudKey) return 'Enter Supabase URL & Anon Key first.';
-        const res = await fetch(`${cloudUrl.replace(/\/$/, '')}/rest/v1/ledger_sync?id=eq.aditya_main`, {
-          method: 'POST',
-          headers: {
-            apikey: cloudKey,
-            Authorization: `Bearer ${cloudKey}`,
-            'Content-Type': 'application/json',
-            Prefer: 'resolution=merge-duplicates',
-          },
-          body: JSON.stringify({
-            id: 'aditya_main',
-            payload: { transactions, aliases, openingBalance },
-            updated_at: new Date().toISOString(),
-          }),
-        });
-        if (!res.ok) throw new Error(`Cloud push failed: ${res.statusText}`);
-        const now = new Date().toLocaleTimeString();
-        set({ lastSyncedAt: now });
-        return `Synced ${transactions.length} txns to cloud at ${now}`;
-      },
-
-      pullFromCloud: async () => {
-        const { cloudUrl, cloudKey } = get();
-        if (!cloudUrl || !cloudKey) return 'Enter Supabase URL & Anon Key first.';
-        const res = await fetch(
-          `${cloudUrl.replace(/\/$/, '')}/rest/v1/ledger_sync?id=eq.aditya_main&select=payload,updated_at`,
-          {
-            headers: {
-              apikey: cloudKey,
-              Authorization: `Bearer ${cloudKey}`,
-            },
-          }
-        );
-        if (!res.ok) throw new Error(`Cloud pull failed: ${res.statusText}`);
-        const data = await res.json();
-        if (data?.[0]?.payload) {
-          const { transactions, aliases, openingBalance } = data[0].payload;
-          const now = new Date().toLocaleTimeString();
-          set({
-            transactions: transactions || [],
-            aliases: aliases || DEFAULT_ALIASES,
-            openingBalance: openingBalance ?? 20000,
-            lastSyncedAt: now,
-          });
-          return `Pulled ${transactions?.length || 0} txns from cloud`;
-        }
-        return 'No cloud backup found yet.';
       },
     }),
     { name: 'bits-ledger-clean-v3' }

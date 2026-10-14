@@ -61,12 +61,12 @@ export default function App() {
     transactions,
     quickMode,
     openingBalance,
-    cloudUrl,
-    cloudKey,
+    syncState,
     lastSyncedAt,
+    syncError,
+    initRealtimeSync,
     setQuickMode,
     setOpeningBalance,
-    setCloudCredentials,
     addTransaction,
     bulkAddTransactions,
     updateTransaction,
@@ -75,8 +75,6 @@ export default function App() {
     clearAllTransactions,
     upsertAlias,
     matchPayeeToAlias,
-    pushToCloud,
-    pullFromCloud,
   } = useExpenseStore();
 
   const [activeTab, setActiveTab] = useState<'overview' | 'log' | 'import' | 'ledger' | 'cloud'>(
@@ -106,6 +104,11 @@ export default function App() {
   const [inflowAmt, setInflowAmt] = useState('');
   const [inflowSource, setInflowSource] = useState<InflowCategory>('Parent Top-up');
   const [inflowNote, setInflowNote] = useState('');
+
+  useEffect(() => {
+    const cleanup = initRealtimeSync();
+    return cleanup;
+  }, [initRealtimeSync]);
 
   // Android MacroDroid Deep-Link Handler
   useEffect(() => {
@@ -401,16 +404,33 @@ export default function App() {
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                    activeTab === tab.id
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${activeTab === tab.id
                       ? 'bg-zinc-800 text-zinc-100'
                       : 'text-zinc-400 hover:text-zinc-200'
-                  }`}
+                    }`}
                 >
                   {tab.label}
                 </button>
               ))}
             </nav>
+          </div>
+
+
+          <div className="flex items-center gap-1.5 text-xs font-mono">
+            <span
+              className={`w-2 h-2 rounded-full ${syncState === 'live'
+                  ? 'bg-emerald-400'
+                  : syncState === 'syncing'
+                    ? 'bg-amber-400 animate-pulse'
+                    : syncState === 'error'
+                      ? 'bg-red-400'
+                      : 'bg-zinc-600'
+                }`}
+            />
+            <span className="text-zinc-400 uppercase">
+              {syncState === 'live' ? `DB Live (${lastSyncedAt || 'synced'})` : syncState}
+            </span>
+            {syncError && <span className="text-red-400 ml-1">({syncError})</span>}
           </div>
 
           <div className="hidden sm:flex items-center gap-4 text-xs font-mono">
@@ -453,11 +473,10 @@ export default function App() {
                   <button
                     key={b.id}
                     onClick={() => setBucketScope(b.id)}
-                    className={`px-3 py-1 text-xs font-medium rounded-sm transition ${
-                      bucketScope === b.id
+                    className={`px-3 py-1 text-xs font-medium rounded-sm transition ${bucketScope === b.id
                         ? 'bg-zinc-800 text-zinc-100'
                         : 'text-zinc-400 hover:text-zinc-200'
-                    }`}
+                      }`}
                   >
                     {b.label}
                   </button>
@@ -694,11 +713,10 @@ export default function App() {
                     <button
                       key={m}
                       onClick={() => setQuickMode(m)}
-                      className={`px-3 py-1 text-xs font-mono font-medium rounded-sm transition ${
-                        quickMode === m
+                      className={`px-3 py-1 text-xs font-mono font-medium rounded-sm transition ${quickMode === m
                           ? 'bg-zinc-100 text-zinc-950'
                           : 'text-zinc-400 hover:text-zinc-200'
-                      }`}
+                        }`}
                     >
                       {m}
                     </button>
@@ -1145,9 +1163,8 @@ export default function App() {
                               false
                             )
                           }
-                          className={`bg-transparent text-right font-mono w-20 focus:bg-zinc-900 focus:outline-none px-1 rounded ${
-                            t.txType === 'CREDIT' ? 'text-emerald-400' : 'text-zinc-100'
-                          }`}
+                          className={`bg-transparent text-right font-mono w-20 focus:bg-zinc-900 focus:outline-none px-1 rounded ${t.txType === 'CREDIT' ? 'text-emerald-400' : 'text-zinc-100'
+                            }`}
                         />
                       </td>
                       <td className="py-2 px-3 text-right">
