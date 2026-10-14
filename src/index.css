@@ -9,7 +9,49 @@ html, body {
   -webkit-tap-highlight-color: transparent;
 }
 
-/* Hide scrollbars for cleaner mobile feel while retaining swipe */
+/* Tactile press response on all interactive buttons */
+button, select, input[type="file"]::file-selector-button {
+  transition: transform 0.12s cubic-bezier(0.2, 0.8, 0.2, 1),
+              background-color 0.15s ease,
+              border-color 0.15s ease,
+              color 0.15s ease,
+              box-shadow 0.15s ease;
+}
+
+button:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+@keyframes toastSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes paneFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-toast {
+  animation: toastSlideUp 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-pane {
+  animation: paneFadeIn 0.18s ease-out forwards;
+}
+
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }
