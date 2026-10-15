@@ -14,6 +14,9 @@ let isApplyingRemoteUpdate = false;
 let syncDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 let activeChannel: ReturnType<NonNullable<typeof supabase>['channel']> | null = null;
 
+// Only allow legacy prototype migration for your primary email
+const OWNER_EMAIL = 'adityabhardwajxe@gmail.com';
+
 export interface UserProfile {
   id: string;
   email: string;
@@ -23,6 +26,7 @@ export interface UserProfile {
 
 interface ExpenseState {
   currentUser: UserProfile | null;
+  lastActiveUserId: string | null;
   transactions: Transaction[];
   aliases: MerchantAlias[];
   presets: QuickPreset[];
@@ -37,7 +41,6 @@ interface ExpenseState {
   syncNowToCloud: () => Promise<void>;
   migrateLegacyData: () => Promise<boolean>;
 
-  // Custom Presets CRUD
   addPreset: (preset: Omit<QuickPreset, 'id'>) => void;
   updatePreset: (id: string, patch: Partial<QuickPreset>) => void;
   deletePreset: (id: string) => void;
@@ -71,16 +74,51 @@ export const useExpenseStore = create<ExpenseState>()(
   persist(
     (set, get) => ({
       currentUser: null,
+      lastActiveUserId: null,
       transactions: [],
       aliases: DEFAULT_ALIASES,
       presets: DEFAULT_PRESETS,
       quickMode: 'UPI',
-      openingBalance: 20000,
+      openingBalance: 0,
       syncState: isCloudConfigured ? 'syncing' : 'offline',
       lastSyncedAt: null,
       syncError: null,
 
-      setCurrentUser: (user) => set({ currentUser: user }),
+      setCurrentUser: (user) => {
+        const prevUserId = get().lastActiveUserId;
+
+        if (!user) {
+          // User signed out: wipe in-memory state so next account on this browser never inherits it
+          if (syncDebounceTimer) clearTimeout(syncDebounceTimer);
+          set({
+            currentUser: null,
+            transactions: [],
+            aliases: DEFAULT_ALIASES,
+            presets: DEFAULT_PRESETS,
+            openingBalance: 0,
+            syncState: 'offline',
+          });
+          return;
+        }
+
+        // If switching to a different Google account on the same browser, reset local cache immediately
+        if (prevUserId && prevUserId !== user.id) {
+          set({
+            currentUser: user,
+            lastActiveUserId: user.id,
+            transactions: [],
+            aliases: DEFAULT_ALIASES,
+            presets: DEFAULT_PRESETS,
+            openingBalance: 0,
+            syncState: 'syncing',
+          });
+        } else {
+          set({
+            currentUser: user,
+            lastActiveUserId: user.id,
+          });
+        }
+      },
 
       syncNowToCloud: async () => {
         const { currentUser, transactions, aliases, presets, openingBalance } = get();
@@ -116,7 +154,9 @@ export const useExpenseStore = create<ExpenseState>()(
       },
 
       migrateLegacyData: async () => {
-        if (!supabase || !get().currentUser) return false;
+        const user = get().currentUser;
+        if (!supabase || !user) return false;
+
         const { data, error } = await supabase
           .from('ledger_sync')
           .select('payload')
@@ -138,7 +178,7 @@ export const useExpenseStore = create<ExpenseState>()(
       initRealtimeSync: (userId, userEmail) => {
         if (!supabase || !userId) {
           set({ syncState: 'offline' });
-          return () => {};
+          return () => { };
         }
 
         if (activeChannel) {
@@ -148,6 +188,8 @@ export const useExpenseStore = create<ExpenseState>()(
 
         (async () => {
           set({ syncState: 'syncing', syncError: null });
+
+          // Fetch ONLY this authenticated user's row
           const { data, error } = await supabase
             .from('ledger_sync')
             .select('payload, updated_at')
@@ -160,32 +202,51 @@ export const useExpenseStore = create<ExpenseState>()(
           }
 
           if (data?.payload) {
+            // Existing user row found in cloud -> load strictly their cloud data
             isApplyingRemoteUpdate = true;
             set({
               transactions: data.payload.transactions || [],
               aliases: data.payload.aliases || DEFAULT_ALIASES,
               presets: data.payload.presets || DEFAULT_PRESETS,
-              openingBalance: data.payload.openingBalance ?? 20000,
+              openingBalance: data.payload.openingBalance ?? 0,
               syncState: 'live',
               lastSyncedAt: new Date().toLocaleTimeString(),
             });
             isApplyingRemoteUpdate = false;
           } else {
-            // First time this Google user logs in: check if legacy 'aditya_main' exists for Aditya
-            const { data: legacy } = await supabase
-              .from('ledger_sync')
-              .select('payload')
-              .eq('id', 'aditya_main')
-              .maybeSingle();
+            // Brand new user!
+            // ONLY auto-migrate 'aditya_main' if this is Aditya's main email; everyone else gets a fresh empty account
+            if (userEmail?.toLowerCase() === OWNER_EMAIL) {
+              const { data: legacy } = await supabase
+                .from('ledger_sync')
+                .select('payload')
+                .eq('id', 'aditya_main')
+                .maybeSingle();
 
-            if (legacy?.payload?.transactions?.length && get().transactions.length === 0) {
-              set({
-                transactions: legacy.payload.transactions,
-                aliases: legacy.payload.aliases || DEFAULT_ALIASES,
-                presets: legacy.payload.presets || DEFAULT_PRESETS,
-                openingBalance: legacy.payload.openingBalance ?? 20000,
-              });
+              if (legacy?.payload?.transactions?.length) {
+                isApplyingRemoteUpdate = true;
+                set({
+                  transactions: legacy.payload.transactions,
+                  aliases: legacy.payload.aliases || DEFAULT_ALIASES,
+                  presets: legacy.payload.presets || DEFAULT_PRESETS,
+                  openingBalance: legacy.payload.openingBalance ?? 20000,
+                });
+                isApplyingRemoteUpdate = false;
+                await get().syncNowToCloud();
+                return;
+              }
             }
+
+            // Initialize fresh empty ledger for this new user
+            isApplyingRemoteUpdate = true;
+            set({
+              transactions: [],
+              aliases: DEFAULT_ALIASES,
+              presets: DEFAULT_PRESETS,
+              openingBalance: 0,
+              syncState: 'live',
+            });
+            isApplyingRemoteUpdate = false;
             await get().syncNowToCloud();
           }
         })();
@@ -208,7 +269,7 @@ export const useExpenseStore = create<ExpenseState>()(
                 transactions: newRecord.payload.transactions || [],
                 aliases: newRecord.payload.aliases || DEFAULT_ALIASES,
                 presets: newRecord.payload.presets || DEFAULT_PRESETS,
-                openingBalance: newRecord.payload.openingBalance ?? 20000,
+                openingBalance: newRecord.payload.openingBalance ?? 0,
                 syncState: 'live',
                 lastSyncedAt: new Date().toLocaleTimeString(),
               });
@@ -227,7 +288,6 @@ export const useExpenseStore = create<ExpenseState>()(
         };
       },
 
-      // --- CUSTOM PRESET ACTIONS ---
       addPreset: (preset) => {
         set((state) => ({
           presets: [
@@ -444,6 +504,6 @@ export const useExpenseStore = create<ExpenseState>()(
         };
       },
     }),
-    { name: 'kosh-multiuser-v1' }
+    { name: 'kosh-multiuser-v2' }
   )
 );
