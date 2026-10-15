@@ -427,6 +427,6 @@ export const useExpenseStore = create<ExpenseState>()(
         };
       },
     }),
-    { name: 'kosh-multiuser-v3' }
+    { name: '-multiuser-v3' }
   )
 );

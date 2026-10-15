@@ -13,8 +13,8 @@ export default defineConfig({
       includeAssets: ['money-pie-chart-logo.svg', 'pwa-192x192.png', 'pwa-512x512.png'],
       manifest: {
         id: '/',
-        name: 'Expensa',
-        short_name: 'Expensa',
+        name: 'Xpensa',
+        short_name: 'Xpensa',
         description: 'Personal Expense Tracker',
         theme_color: '#09090b',
         background_color: '#09090b',

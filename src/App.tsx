@@ -215,7 +215,7 @@ export default function App() {
   if (authLoading) {
     return (
       <div className="min-h-screen bg-[#09090b] text-zinc-400 flex items-center justify-center text-xs font-mono">
-        INITIALIZING KOSH SESSION...
+        INITIALIZING Xpensa SESSION...
       </div>
     );
   }
@@ -228,12 +228,12 @@ export default function App() {
           <div className="flex flex-col items-center gap-3">
             <img
               src="/pwa-192x192.png"
-              alt="Kosh"
+              alt="Xpensa"
               className="w-12 h-12 rounded-xl border border-zinc-700"
             />
             <div>
               <h1 className="text-lg font-semibold tracking-tight text-zinc-100">
-                KOSH — Personal Ledger
+                Xpensa
               </h1>
               <p className="text-xs text-zinc-400 mt-1">
                 Campus Expense, SU Credit & Group Split Analytics
@@ -245,7 +245,7 @@ export default function App() {
             <div>• Isolated cloud ledger per Google account</div>
             <div>• Customizable 1-tap campus presets</div>
             <div>• De-inflated group split & true spend analytics</div>
-            <div>• HDFC statement & Android GPay auto-capture</div>
+            <div>• Bank statement & Android GPay auto-capture</div>
           </div>
 
           <button

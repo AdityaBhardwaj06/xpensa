@@ -52,7 +52,7 @@ export function AutomationTab({ notify, onSimulateRawNotification }: AutomationT
 
           <p className="text-xs text-zinc-400 leading-relaxed">
             In <strong>MacroDroid</strong> on your Android phone, create a macro that listens only to
-            Google Pay notifications and opens this URL. Kosh automatically extracts the ₹ amount and
+            Google Pay notifications and opens this URL.  automatically extracts the ₹ amount and
             maps the merchant name:
           </p>
 
