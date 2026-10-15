@@ -22,6 +22,7 @@ export function Header({
     { id: 'ledger', label: `Transactions (${txCount})` },
     { id: 'import', label: 'HDFC Import' },
     { id: 'auto', label: 'Android Auto' },
+    { id: 'profile', label: 'My Profile' },
   ];
 
   return (

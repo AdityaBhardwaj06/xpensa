@@ -5,24 +5,44 @@ import type {
   MerchantAlias,
   PaymentMode,
   ExpenseCategory,
+  QuickPreset,
 } from '../types/expense';
-import { DEFAULT_ALIASES, SEED_TRANSACTIONS } from '../types/expense';
+import { DEFAULT_ALIASES, DEFAULT_PRESETS } from '../types/expense';
 import { supabase, isCloudConfigured } from '../lib/supabase';
 
-const SYNC_ROW_ID = 'aditya_main';
 let isApplyingRemoteUpdate = false;
 let syncDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+let activeChannel: ReturnType<NonNullable<typeof supabase>['channel']> | null = null;
+
+export interface UserProfile {
+  id: string;
+  email: string;
+  name: string;
+  avatarUrl?: string;
+}
 
 interface ExpenseState {
+  currentUser: UserProfile | null;
   transactions: Transaction[];
   aliases: MerchantAlias[];
+  presets: QuickPreset[];
   quickMode: PaymentMode;
   openingBalance: number;
   syncState: 'offline' | 'syncing' | 'live' | 'error';
   lastSyncedAt: string | null;
   syncError: string | null;
-  initRealtimeSync: () => () => void;
+
+  setCurrentUser: (user: UserProfile | null) => void;
+  initRealtimeSync: (userId?: string, userEmail?: string) => () => void;
   syncNowToCloud: () => Promise<void>;
+  migrateLegacyData: () => Promise<boolean>;
+
+  // Custom Presets CRUD
+  addPreset: (preset: Omit<QuickPreset, 'id'>) => void;
+  updatePreset: (id: string, patch: Partial<QuickPreset>) => void;
+  deletePreset: (id: string) => void;
+  resetDefaultPresets: () => void;
+
   setQuickMode: (mode: PaymentMode) => void;
   setOpeningBalance: (bal: number) => void;
   addTransaction: (tx: Omit<Transaction, 'id'>) => void;
@@ -40,7 +60,7 @@ interface ExpenseState {
 }
 
 function scheduleCloudPush(get: () => ExpenseState) {
-  if (!isCloudConfigured || !supabase || isApplyingRemoteUpdate) return;
+  if (!isCloudConfigured || !supabase || isApplyingRemoteUpdate || !get().currentUser) return;
   if (syncDebounceTimer) clearTimeout(syncDebounceTimer);
   syncDebounceTimer = setTimeout(() => {
     void get().syncNowToCloud();
@@ -50,24 +70,35 @@ function scheduleCloudPush(get: () => ExpenseState) {
 export const useExpenseStore = create<ExpenseState>()(
   persist(
     (set, get) => ({
-      transactions: SEED_TRANSACTIONS,
+      currentUser: null,
+      transactions: [],
       aliases: DEFAULT_ALIASES,
+      presets: DEFAULT_PRESETS,
       quickMode: 'UPI',
       openingBalance: 20000,
       syncState: isCloudConfigured ? 'syncing' : 'offline',
       lastSyncedAt: null,
       syncError: null,
 
+      setCurrentUser: (user) => set({ currentUser: user }),
+
       syncNowToCloud: async () => {
-        if (!supabase || isApplyingRemoteUpdate) return;
-        const { transactions, aliases, openingBalance } = get();
+        const { currentUser, transactions, aliases, presets, openingBalance } = get();
+        if (!supabase || isApplyingRemoteUpdate || !currentUser) return;
         set({ syncState: 'syncing', syncError: null });
 
         const nowIso = new Date().toISOString();
         const { error } = await supabase.from('ledger_sync').upsert(
           {
-            id: SYNC_ROW_ID,
-            payload: { transactions, aliases, openingBalance, updatedAt: nowIso },
+            id: currentUser.id,
+            user_email: currentUser.email,
+            payload: {
+              transactions,
+              aliases,
+              presets,
+              openingBalance,
+              updatedAt: nowIso,
+            },
             updated_at: nowIso,
           },
           { onConflict: 'id' }
@@ -84,19 +115,43 @@ export const useExpenseStore = create<ExpenseState>()(
         }
       },
 
-      initRealtimeSync: () => {
-        if (!supabase) {
+      migrateLegacyData: async () => {
+        if (!supabase || !get().currentUser) return false;
+        const { data, error } = await supabase
+          .from('ledger_sync')
+          .select('payload')
+          .eq('id', 'aditya_main')
+          .maybeSingle();
+
+        if (error || !data?.payload?.transactions?.length) return false;
+
+        set({
+          transactions: data.payload.transactions,
+          aliases: data.payload.aliases || DEFAULT_ALIASES,
+          presets: data.payload.presets || DEFAULT_PRESETS,
+          openingBalance: data.payload.openingBalance ?? 20000,
+        });
+        await get().syncNowToCloud();
+        return true;
+      },
+
+      initRealtimeSync: (userId, userEmail) => {
+        if (!supabase || !userId) {
           set({ syncState: 'offline' });
           return () => {};
         }
 
-        // 1. Initial Pull or Seed on App Boot
+        if (activeChannel) {
+          void supabase.removeChannel(activeChannel);
+          activeChannel = null;
+        }
+
         (async () => {
-          set({ syncState: 'syncing' });
+          set({ syncState: 'syncing', syncError: null });
           const { data, error } = await supabase
             .from('ledger_sync')
             .select('payload, updated_at')
-            .eq('id', SYNC_ROW_ID)
+            .eq('id', userId)
             .maybeSingle();
 
           if (error) {
@@ -104,52 +159,46 @@ export const useExpenseStore = create<ExpenseState>()(
             return;
           }
 
-          const remoteTx = data?.payload?.transactions || [];
-          const localTx = get().transactions;
-
-          // If cloud has data and local is empty (e.g. opening on your phone for the first time), pull cloud data
-          if (remoteTx.length > 0 && localTx.length === 0) {
+          if (data?.payload) {
             isApplyingRemoteUpdate = true;
             set({
-              transactions: remoteTx,
-              aliases: data?.payload?.aliases || DEFAULT_ALIASES,
-              openingBalance: data?.payload?.openingBalance ?? 20000,
+              transactions: data.payload.transactions || [],
+              aliases: data.payload.aliases || DEFAULT_ALIASES,
+              presets: data.payload.presets || DEFAULT_PRESETS,
+              openingBalance: data.payload.openingBalance ?? 20000,
               syncState: 'live',
               lastSyncedAt: new Date().toLocaleTimeString(),
             });
             isApplyingRemoteUpdate = false;
-          } else if (localTx.length > 0 && remoteTx.length === 0) {
-            // If laptop has your 290 imported rows and cloud is empty, push laptop data to cloud automatically
-            await get().syncNowToCloud();
-          } else if (data?.payload) {
-            // Both exist: take remote if it has more or newer records
-            isApplyingRemoteUpdate = true;
-            set({
-              transactions: remoteTx.length >= localTx.length ? remoteTx : localTx,
-              aliases: data.payload.aliases || get().aliases,
-              openingBalance: data.payload.openingBalance ?? get().openingBalance,
-              syncState: 'live',
-              lastSyncedAt: new Date().toLocaleTimeString(),
-            });
-            isApplyingRemoteUpdate = false;
-            if (localTx.length > remoteTx.length) {
-              await get().syncNowToCloud();
-            }
           } else {
-            set({ syncState: 'live' });
+            // First time this Google user logs in: check if legacy 'aditya_main' exists for Aditya
+            const { data: legacy } = await supabase
+              .from('ledger_sync')
+              .select('payload')
+              .eq('id', 'aditya_main')
+              .maybeSingle();
+
+            if (legacy?.payload?.transactions?.length && get().transactions.length === 0) {
+              set({
+                transactions: legacy.payload.transactions,
+                aliases: legacy.payload.aliases || DEFAULT_ALIASES,
+                presets: legacy.payload.presets || DEFAULT_PRESETS,
+                openingBalance: legacy.payload.openingBalance ?? 20000,
+              });
+            }
+            await get().syncNowToCloud();
           }
         })();
 
-        // 2. Subscribe to Live Postgres WebSocket Changes
         const channel = supabase
-          .channel('realtime_ledger_sync')
+          .channel(`ledger_sync_${userId}`)
           .on(
             'postgres_changes',
             {
               event: '*',
               schema: 'public',
               table: 'ledger_sync',
-              filter: `id=eq.${SYNC_ROW_ID}`,
+              filter: `id=eq.${userId}`,
             },
             (payload) => {
               const newRecord = payload.new as { payload?: any } | undefined;
@@ -158,6 +207,7 @@ export const useExpenseStore = create<ExpenseState>()(
               set({
                 transactions: newRecord.payload.transactions || [],
                 aliases: newRecord.payload.aliases || DEFAULT_ALIASES,
+                presets: newRecord.payload.presets || DEFAULT_PRESETS,
                 openingBalance: newRecord.payload.openingBalance ?? 20000,
                 syncState: 'live',
                 lastSyncedAt: new Date().toLocaleTimeString(),
@@ -167,11 +217,44 @@ export const useExpenseStore = create<ExpenseState>()(
           )
           .subscribe();
 
+        activeChannel = channel;
+
         return () => {
-          if (supabase) {
-            void supabase.removeChannel(channel);
+          if (activeChannel) {
+            void supabase.removeChannel(activeChannel);
+            activeChannel = null;
           }
         };
+      },
+
+      // --- CUSTOM PRESET ACTIONS ---
+      addPreset: (preset) => {
+        set((state) => ({
+          presets: [
+            ...state.presets,
+            { ...preset, id: `preset_${Date.now()}_${Math.random().toString(36).slice(2, 5)}` },
+          ],
+        }));
+        scheduleCloudPush(get);
+      },
+
+      updatePreset: (id, patch) => {
+        set((state) => ({
+          presets: state.presets.map((p) => (p.id === id ? { ...p, ...patch } : p)),
+        }));
+        scheduleCloudPush(get);
+      },
+
+      deletePreset: (id) => {
+        set((state) => ({
+          presets: state.presets.filter((p) => p.id !== id),
+        }));
+        scheduleCloudPush(get);
+      },
+
+      resetDefaultPresets: () => {
+        set({ presets: DEFAULT_PRESETS });
+        scheduleCloudPush(get);
       },
 
       setQuickMode: (mode) => set({ quickMode: mode }),
@@ -361,6 +444,6 @@ export const useExpenseStore = create<ExpenseState>()(
         };
       },
     }),
-    { name: 'bits-ledger-clean-v3' }
+    { name: 'kosh-multiuser-v1' }
   )
 );

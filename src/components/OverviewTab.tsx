@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { Download } from 'lucide-react';
 import { useExpenseStore } from '../store/useExpenseStore';
+import { getEffectiveSpend } from '../types/expense';
 import type { Transaction } from '../types/expense';
 import { triggerHaptic, exportTransactionsToCSV } from '../utils/feedback';
 import type { NotifyFn } from '../constants/taxonomy';
@@ -32,26 +33,41 @@ export function OverviewTab({ notify, onDrillDown }: OverviewTabProps) {
     const parentInflows = credits
       .filter((t) => t.inflowCat === 'Parent Top-up')
       .reduce((acc, t) => acc + t.price, 0);
-    const relativeInflows = credits
-      .filter((t) => t.inflowCat === 'Relative / Gift')
+    const splitReimbursements = credits
+      .filter((t) => t.inflowCat === 'Split Reimbursement')
       .reduce((acc, t) => acc + t.price, 0);
 
     const oopDebits = transactions.filter(
       (t) => t.txType === 'DEBIT' && ['UPI', 'Cash', 'Card'].includes(t.mode)
     );
-    const totalOOPDebits = oopDebits.reduce((acc, t) => acc + t.price, 0);
-    const liquidBalance = openingBalance + totalCredits - totalOOPDebits;
+    // Actual money that left your bank account
+    const totalOOPOutflow = oopDebits.reduce((acc, t) => acc + t.price, 0);
+    // Your true personal out-of-pocket spend (excludes friends' shares)
+    const trueOOPPersonalSpend = oopDebits.reduce((acc, t) => acc + getEffectiveSpend(t), 0);
+
+    // Total fronted for friends across all debits
+    const allDebits = transactions.filter((t) => t.txType === 'DEBIT');
+    const totalFrontedForFriends = allDebits.reduce(
+      (acc, t) => acc + Math.max(0, t.price - getEffectiveSpend(t)),
+      0
+    );
+    const netPendingFromFriends = Math.max(0, totalFrontedForFriends - splitReimbursements);
+
+    const liquidBalance = openingBalance + totalCredits - totalOOPOutflow;
 
     const uniqueDays = new Set(oopDebits.map((t) => t.date)).size || 1;
-    const dailyBurn = oopDebits.length > 0 ? totalOOPDebits / uniqueDays : 0;
+    const dailyBurn = oopDebits.length > 0 ? trueOOPPersonalSpend / uniqueDays : 0;
     const runwayDays =
       dailyBurn > 0 && liquidBalance > 0 ? Math.round(liquidBalance / dailyBurn) : 0;
 
     return {
       totalCredits,
       parentInflows,
-      relativeInflows,
-      totalOOPDebits,
+      splitReimbursements,
+      totalOOPOutflow,
+      trueOOPPersonalSpend,
+      totalFrontedForFriends,
+      netPendingFromFriends,
       liquidBalance,
       dailyBurn,
       runwayDays,
@@ -76,17 +92,27 @@ export function OverviewTab({ notify, onDrillDown }: OverviewTabProps) {
     });
   }, [periodDebits, bucketScope, modeFilter]);
 
+  // All analytics use getEffectiveSpend(t) so group bills never inflate your personal numbers
   const bucketTotals = useMemo(() => {
     const oop = periodDebits
       .filter((t) => ['UPI', 'Cash', 'Card'].includes(t.mode))
-      .reduce((s, t) => s + t.price, 0);
-    const su = periodDebits.filter((t) => t.mode === 'SU').reduce((s, t) => s + t.price, 0);
-    const id = periodDebits.filter((t) => t.mode === 'ID').reduce((s, t) => s + t.price, 0);
-    const parents = periodDebits
-      .filter((t) => t.mode === 'Parents')
-      .reduce((s, t) => s + t.price, 0);
-    const activeTotal = activeDebits.reduce((s, t) => s + t.price, 0);
-    return { oop, su, id, su_id: su + id, parents, activeTotal };
+      .reduce((s, t) => s + getEffectiveSpend(t), 0);
+    const su = periodDebits
+      .filter((t) => t.mode === 'SU')
+      .reduce((s, t) => s + getEffectiveSpend(t), 0);
+    const id = periodDebits
+      .filter((t) => t.mode === 'ID')
+      .reduce((s, t) => s + getEffectiveSpend(t), 0);
+    const activePersonalTotal = activeDebits.reduce((s, t) => s + getEffectiveSpend(t), 0);
+    const activeGrossBillTotal = activeDebits.reduce((s, t) => s + t.price, 0);
+    return {
+      oop,
+      su,
+      id,
+      su_id: su + id,
+      activeTotal: activePersonalTotal,
+      grossTotal: activeGrossBillTotal,
+    };
   }, [periodDebits, activeDebits]);
 
   const breakdowns = useMemo(() => {
@@ -95,16 +121,18 @@ export function OverviewTab({ notify, onDrillDown }: OverviewTabProps) {
     const byMode: Record<string, { sum: number; count: number }> = {};
 
     activeDebits.forEach((t) => {
+      const spend = getEffectiveSpend(t);
       const p = t.place || 'Other';
-      byPlace[p] = { sum: (byPlace[p]?.sum || 0) + t.price, count: (byPlace[p]?.count || 0) + 1 };
+      byPlace[p] = { sum: (byPlace[p]?.sum || 0) + spend, count: (byPlace[p]?.count || 0) + 1 };
 
       const c = t.cat || 'Miscellaneous';
-      byCat[c] = { sum: (byCat[c]?.sum || 0) + t.price, count: (byCat[c]?.count || 0) + 1 };
+      byCat[c] = { sum: (byCat[c]?.sum || 0) + spend, count: (byCat[c]?.count || 0) + 1 };
     });
 
     periodDebits.forEach((t) => {
+      const spend = getEffectiveSpend(t);
       byMode[t.mode] = {
-        sum: (byMode[t.mode]?.sum || 0) + t.price,
+        sum: (byMode[t.mode]?.sum || 0) + spend,
         count: (byMode[t.mode]?.count || 0) + 1,
       };
     });
@@ -119,7 +147,7 @@ export function OverviewTab({ notify, onDrillDown }: OverviewTabProps) {
   const deepAnalytics = useMemo(() => {
     const byDate: Record<string, number> = {};
     activeDebits.forEach((t) => {
-      byDate[t.date] = (byDate[t.date] || 0) + t.price;
+      byDate[t.date] = (byDate[t.date] || 0) + getEffectiveSpend(t);
     });
     const recentDates = Object.entries(byDate)
       .sort((a, b) => a[0].localeCompare(b[0]))
@@ -183,7 +211,7 @@ export function OverviewTab({ notify, onDrillDown }: OverviewTabProps) {
     const habits = habitDefs
       .map((h) => {
         const matched = activeDebits.filter(h.match);
-        const sum = matched.reduce((s, t) => s + t.price, 0);
+        const sum = matched.reduce((s, t) => s + getEffectiveSpend(t), 0);
         const count = matched.length;
         const avg = count > 0 ? sum / count : 0;
         const share = bucketTotals.activeTotal > 0 ? (sum / bucketTotals.activeTotal) * 100 : 0;
@@ -199,7 +227,7 @@ export function OverviewTab({ notify, onDrillDown }: OverviewTabProps) {
       const d = new Date(t.date + 'T00:00:00');
       if (!isNaN(d.getTime())) {
         const idx = d.getDay();
-        daySums[idx] += t.price;
+        daySums[idx] += getEffectiveSpend(t);
         dayCounts[idx] += 1;
       }
     });
@@ -211,14 +239,29 @@ export function OverviewTab({ notify, onDrillDown }: OverviewTabProps) {
       pct: Math.round((daySums[idx] / maxDaySum) * 100),
     }));
 
-    const micro = activeDebits.filter((t) => t.price <= 50);
-    const mid = activeDebits.filter((t) => t.price > 50 && t.price <= 200);
-    const bulk = activeDebits.filter((t) => t.price > 200);
+    const micro = activeDebits.filter((t) => getEffectiveSpend(t) <= 50);
+    const mid = activeDebits.filter((t) => {
+      const s = getEffectiveSpend(t);
+      return s > 50 && s <= 200;
+    });
+    const bulk = activeDebits.filter((t) => getEffectiveSpend(t) > 200);
 
     const tiers = [
-      { label: 'Micro (≤ ₹50)', count: micro.length, sum: micro.reduce((s, t) => s + t.price, 0) },
-      { label: 'Mid-Ticket (₹51–₹200)', count: mid.length, sum: mid.reduce((s, t) => s + t.price, 0) },
-      { label: 'High-Ticket (> ₹200)', count: bulk.length, sum: bulk.reduce((s, t) => s + t.price, 0) },
+      {
+        label: 'Micro (≤ ₹50)',
+        count: micro.length,
+        sum: micro.reduce((s, t) => s + getEffectiveSpend(t), 0),
+      },
+      {
+        label: 'Mid-Ticket (₹51–₹200)',
+        count: mid.length,
+        sum: mid.reduce((s, t) => s + getEffectiveSpend(t), 0),
+      },
+      {
+        label: 'High-Ticket (> ₹200)',
+        count: bulk.length,
+        sum: bulk.reduce((s, t) => s + getEffectiveSpend(t), 0),
+      },
     ];
 
     return { recentDates, maxDaily, habits, weekdayStats, tiers };
@@ -316,29 +359,31 @@ export function OverviewTab({ notify, onDrillDown }: OverviewTabProps) {
         </div>
       </div>
 
-      {/* 4-Column Metric Strip */}
+      {/* 4-Column Metric Strip (De-Inflated Personal Spend vs Group Splits) */}
       <div className="grid grid-cols-2 lg:grid-cols-4 bg-zinc-800/80 gap-px border border-zinc-800 rounded-lg overflow-hidden w-full">
         <div className="bg-[#09090b] p-3.5 sm:p-4">
           <div className="text-[10px] sm:text-[11px] font-medium text-zinc-500 uppercase tracking-wider">
-            Filtered Spend
+            True Personal Spend
           </div>
           <div className="text-lg sm:text-2xl font-mono font-semibold text-zinc-100 mt-1 truncate">
             ₹{fmt(bucketTotals.activeTotal)}
           </div>
-          <div className="text-[11px] text-zinc-500 mt-0.5 font-mono">
-            {activeDebits.length} txns · Avg ₹{Math.round(walletStats.dailyBurn)}/d
+          <div className="text-[11px] text-zinc-500 mt-0.5 font-mono truncate">
+            {bucketTotals.grossTotal > bucketTotals.activeTotal
+              ? `Gross Paid: ₹${fmt(bucketTotals.grossTotal)}`
+              : `${activeDebits.length} txns · Avg ₹${Math.round(walletStats.dailyBurn)}/d`}
           </div>
         </div>
 
         <div className="bg-[#09090b] p-3.5 sm:p-4">
           <div className="text-[10px] sm:text-[11px] font-medium text-zinc-500 uppercase tracking-wider">
-            Out-of-Pocket
+            Liquid Bank Balance
           </div>
           <div className="text-lg sm:text-2xl font-mono font-semibold text-zinc-100 mt-1 truncate">
-            ₹{fmt(bucketTotals.oop)}
+            ₹{fmt(walletStats.liquidBalance)}
           </div>
           <div className="text-[11px] text-zinc-500 mt-0.5 font-mono truncate">
-            Left: ₹{fmt(walletStats.liquidBalance)} ({walletStats.runwayDays}d)
+            My OOP: ₹{fmt(bucketTotals.oop)} ({walletStats.runwayDays}d left)
           </div>
         </div>
 
@@ -356,13 +401,15 @@ export function OverviewTab({ notify, onDrillDown }: OverviewTabProps) {
 
         <div className="bg-[#09090b] p-3.5 sm:p-4">
           <div className="text-[10px] sm:text-[11px] font-medium text-zinc-500 uppercase tracking-wider">
-            Total Inflows
+            Group Splits & Inflows
           </div>
-          <div className="text-lg sm:text-2xl font-mono font-semibold text-zinc-100 mt-1 truncate">
-            ₹{fmt(walletStats.totalCredits)}
+          <div className="text-lg sm:text-2xl font-mono font-semibold text-emerald-400 mt-1 truncate">
+            {walletStats.netPendingFromFriends > 0
+              ? `₹${fmt(walletStats.netPendingFromFriends)} Owed`
+              : `₹${fmt(walletStats.totalCredits)} In`}
           </div>
           <div className="text-[11px] text-zinc-500 mt-0.5 font-mono truncate">
-            Par ₹{fmt(walletStats.parentInflows)} · Gift ₹{fmt(walletStats.relativeInflows)}
+            Fronted ₹{fmt(walletStats.totalFrontedForFriends)} · Reimb ₹{fmt(walletStats.splitReimbursements)}
           </div>
         </div>
       </div>
@@ -373,10 +420,10 @@ export function OverviewTab({ notify, onDrillDown }: OverviewTabProps) {
           <div className="flex justify-between items-center border-b border-zinc-800/80 pb-2">
             <div>
               <h3 className="text-xs font-medium uppercase tracking-wider text-zinc-300">
-                Daily Spend Trajectory (Last 14 Active Days)
+                Daily Personal Spend (Last 14 Active Days)
               </h3>
               <p className="text-[11px] text-zinc-500">
-                Tap any bar to inspect transactions on that date
+                Excludes friends' split shares · Tap any bar to inspect date
               </p>
             </div>
             <span className="text-xs font-mono text-zinc-400">
@@ -398,7 +445,7 @@ export function OverviewTab({ notify, onDrillDown }: OverviewTabProps) {
                     onClick={() => {
                       triggerHaptic('light');
                       onDrillDown({ date });
-                      notify(`Date: ${date}`, `Spent ₹${fmt(sum)}`, 'info');
+                      notify(`Date: ${date}`, `Personal spend ₹${fmt(sum)}`, 'info');
                     }}
                     className="flex-1 flex flex-col items-center justify-end h-full group cursor-pointer"
                   >
@@ -446,7 +493,7 @@ export function OverviewTab({ notify, onDrillDown }: OverviewTabProps) {
 
           <div className="pt-2 border-t border-zinc-800/80 space-y-2">
             <div className="text-[11px] font-medium uppercase tracking-wider text-zinc-400">
-              Ticket Size Distribution
+              Personal Ticket Size Distribution
             </div>
             {deepAnalytics.tiers.map((tier) => (
               <div key={tier.label} className="flex justify-between items-center text-xs">
@@ -465,10 +512,10 @@ export function OverviewTab({ notify, onDrillDown }: OverviewTabProps) {
         <div className="p-3.5 sm:p-4 border-b border-zinc-800/80 flex justify-between items-center">
           <div>
             <h3 className="text-xs font-medium uppercase tracking-wider text-zinc-200">
-              Campus Habit Frequency Inspector
+              Campus Habit Frequency Inspector (True Personal Share)
             </h3>
             <p className="text-[11px] text-zinc-500">
-              Tracks cumulative drain from repeat ₹10–₹100 campus purchases
+              Tracks your real personal consumption across campus spots
             </p>
           </div>
           <span className="text-[11px] font-mono text-zinc-500">
@@ -483,9 +530,9 @@ export function OverviewTab({ notify, onDrillDown }: OverviewTabProps) {
                 <th className="py-2.5 px-3">Habit Cluster</th>
                 <th className="py-2.5 px-3">Primary Spot</th>
                 <th className="py-2.5 px-3 text-right">Frequency</th>
-                <th className="py-2.5 px-3 text-right">Avg Ticket</th>
+                <th className="py-2.5 px-3 text-right">Your Avg Ticket</th>
                 <th className="py-2.5 px-3 text-right">Share</th>
-                <th className="py-2.5 px-3 text-right">Cumulative Spend</th>
+                <th className="py-2.5 px-3 text-right">Your True Spend</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-800/60">
@@ -521,7 +568,8 @@ export function OverviewTab({ notify, onDrillDown }: OverviewTabProps) {
           </div>
           <div className="space-y-2">
             {breakdowns.modes.map(([mode, info]) => {
-              const total = periodDebits.reduce((s, t) => s + t.price, 0) || 1;
+              const total =
+                periodDebits.reduce((s, t) => s + getEffectiveSpend(t), 0) || 1;
               const pct = Math.round((info.sum / total) * 100);
               return (
                 <div

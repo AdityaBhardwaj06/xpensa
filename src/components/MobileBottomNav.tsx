@@ -1,4 +1,4 @@
-import { LayoutDashboard, Zap, Upload, ReceiptText, Smartphone } from 'lucide-react';
+import { LayoutDashboard, Zap, Upload, ReceiptText, Smartphone, User } from 'lucide-react';
 import type { TabId } from '../constants/taxonomy';
 
 interface MobileBottomNavProps {
@@ -13,6 +13,7 @@ export function MobileBottomNav({ activeTab, onSelectTab }: MobileBottomNavProps
     { id: 'ledger', label: 'Ledger', icon: ReceiptText },
     { id: 'import', label: 'Import', icon: Upload },
     { id: 'auto', label: 'Auto', icon: Smartphone },
+    { id: 'profile', label: 'My Tab', icon: User },
   ];
 
   return (
@@ -23,7 +24,7 @@ export function MobileBottomNav({ activeTab, onSelectTab }: MobileBottomNavProps
           <button
             key={item.id}
             onClick={() => onSelectTab(item.id)}
-            className={`flex flex-col items-center gap-1 py-1 px-2.5 rounded-md transition ${
+            className={`flex flex-col items-center gap-1 py-1 px-2 rounded-md transition ${
               activeTab === item.id ? 'text-zinc-100' : 'text-zinc-500'
             }`}
           >

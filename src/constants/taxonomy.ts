@@ -47,7 +47,7 @@ export const PAYMENT_MODES: PaymentMode[] = [
   'Parents',
 ];
 
-export type TabId = 'overview' | 'log' | 'import' | 'ledger' | 'auto';
+export type TabId = 'overview' | 'log' | 'import' | 'ledger' | 'auto' | 'profile';
 
 export interface ToastItem {
   id: string;
