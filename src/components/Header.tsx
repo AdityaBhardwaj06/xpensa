@@ -1,4 +1,3 @@
-import React from 'react';
 import type { TabId } from '../constants/taxonomy';
 import { fmt } from '../constants/taxonomy';
 
@@ -10,27 +9,38 @@ interface HeaderProps {
   liquidBalance: number;
 }
 
-export const Header: React.FC<HeaderProps> = ({
+export function Header({
   activeTab,
   onSelectTab,
   txCount,
   syncState,
   liquidBalance,
-}) => {
+}: HeaderProps) {
   const tabs: { id: TabId; label: string }[] = [
-    { id: 'overview', label: 'Overview & Analytics' },
+    { id: 'overview', label: 'Overview' },
     { id: 'log', label: 'Quick Entry' },
-    { id: 'import', label: 'Statement Import' },
     { id: 'ledger', label: `Transactions (${txCount})` },
+    { id: 'import', label: 'HDFC Import' },
+    { id: 'auto', label: 'Android Auto' },
   ];
 
   return (
     <header className="border-b border-zinc-800/80 bg-[#09090b]/95 sticky top-0 z-30 backdrop-blur w-full">
       <div className="max-w-6xl mx-auto px-3 sm:px-4 h-14 flex items-center justify-between gap-2">
         <div className="flex items-center gap-4 min-w-0">
-          <span className="font-semibold tracking-tight text-sm text-zinc-100 shrink-0">
-            LEDGER / BITS
-          </span>
+          <div className="flex items-center gap-2 shrink-0">
+            <img
+              src="/pwa-192x192.png"
+              alt="XPENSA"
+              className="w-6 h-6 rounded-md border border-zinc-800"
+              onError={(e) => {
+                (e.target as HTMLImageElement).style.display = 'none';
+              }}
+            />
+            <span className="font-semibold tracking-tight text-sm text-zinc-100">
+              XPENSA
+            </span>
+          </div>
 
           <nav className="hidden md:flex items-center gap-1">
             {tabs.map((tab) => (
@@ -83,4 +93,4 @@ export const Header: React.FC<HeaderProps> = ({
       </div>
     </header>
   );
-};
+}

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { useExpenseStore } from '../store/useExpenseStore';
 import { parseHDFCStatementFile } from '../utils/hdfcParser';
 import type { RawParsedRow } from '../utils/hdfcParser';
@@ -12,10 +12,10 @@ interface StatementImporterTabProps {
   onImportSuccess: () => void;
 }
 
-export const StatementImporterTab: React.FC<StatementImporterTabProps> = ({
+export function StatementImporterTab({
   notify,
   onImportSuccess,
-}) => {
+}: StatementImporterTabProps) {
   const { bulkAddTransactions, upsertAlias, matchPayeeToAlias } = useExpenseStore();
 
   const [parsedRows, setParsedRows] = useState<RawParsedRow[]>([]);
@@ -255,4 +255,4 @@ export const StatementImporterTab: React.FC<StatementImporterTabProps> = ({
       )}
     </div>
   );
-};
+}

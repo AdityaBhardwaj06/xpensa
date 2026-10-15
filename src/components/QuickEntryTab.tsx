@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useExpenseStore } from '../store/useExpenseStore';
-import type { PaymentMode, InflowCategory } from '../types/expense';
 import { CAMPUS_PRESETS } from '../types/expense';
+import type { PaymentMode, InflowCategory } from '../types/expense';
 import { INFLOW_TYPES, PAYMENT_MODES, fmt } from '../constants/taxonomy';
 import type { NotifyFn } from '../constants/taxonomy';
 import { triggerHaptic } from '../utils/feedback';
@@ -10,13 +10,11 @@ interface QuickEntryTabProps {
   notify: NotifyFn;
 }
 
-export const QuickEntryTab: React.FC<QuickEntryTabProps> = ({ notify }) => {
+export function QuickEntryTab({ notify }: QuickEntryTabProps) {
   const { quickMode, setQuickMode, addTransaction, matchPayeeToAlias } = useExpenseStore();
 
   const [shorthand, setShorthand] = useState('');
   const [flashedPreset, setFlashedPreset] = useState<string | null>(null);
-
-  // Manual Inflow State
   const [inflowAmt, setInflowAmt] = useState('');
   const [inflowSource, setInflowSource] = useState<InflowCategory>('Parent Top-up');
   const [inflowNote, setInflowNote] = useState('');
@@ -75,7 +73,6 @@ export const QuickEntryTab: React.FC<QuickEntryTabProps> = ({ notify }) => {
 
   return (
     <div className="space-y-4 sm:space-y-6 animate-pane">
-      {/* Command Entry Bar */}
       <form
         onSubmit={handleShorthandSubmit}
         className="border border-zinc-800 rounded-lg p-3.5 sm:p-4 bg-zinc-900/40 space-y-2"
@@ -95,14 +92,13 @@ export const QuickEntryTab: React.FC<QuickEntryTabProps> = ({ notify }) => {
           />
           <button
             type="submit"
-            className="bg-zinc-100 hover:bg-white text-zinc-950 px-4 py-2 rounded-md font-medium text-xs shrink-0 cursor-pointer"
+            className="bg-zinc-100 hover:bg-white text-zinc-950 px-4 py-2 rounded-md font-medium text-xs shrink-0"
           >
             Record
           </button>
         </div>
       </form>
 
-      {/* 1-Tap Presets Section */}
       <div className="border border-zinc-800 rounded-lg p-3.5 sm:p-4 space-y-3">
         <div className="flex items-center justify-between gap-2 overflow-x-auto no-scrollbar py-0.5">
           <span className="text-xs font-medium text-zinc-400 uppercase tracking-wider shrink-0">
@@ -117,7 +113,7 @@ export const QuickEntryTab: React.FC<QuickEntryTabProps> = ({ notify }) => {
                   setQuickMode(m);
                   notify(`Mode switched to ${m}`, '1-Tap presets updated', 'info');
                 }}
-                className={`px-2.5 py-1 text-xs font-mono font-medium rounded-sm transition cursor-pointer ${
+                className={`px-2.5 py-1 text-xs font-mono font-medium rounded-sm transition ${
                   quickMode === m ? 'bg-zinc-100 text-zinc-950' : 'text-zinc-400'
                 }`}
               >
@@ -159,7 +155,7 @@ export const QuickEntryTab: React.FC<QuickEntryTabProps> = ({ notify }) => {
                     'success'
                   );
                 }}
-                className={`border rounded-md p-2.5 text-left transition cursor-pointer ${
+                className={`border rounded-md p-2.5 text-left transition ${
                   isFlashed
                     ? 'border-zinc-100 bg-zinc-800 scale-[0.97]'
                     : 'border-zinc-800/90 hover:border-zinc-600 bg-zinc-900/30'
@@ -169,9 +165,7 @@ export const QuickEntryTab: React.FC<QuickEntryTabProps> = ({ notify }) => {
                   <span>{p.place}</span>
                   <span>{quickMode}</span>
                 </div>
-                <div className="text-xs font-medium text-zinc-200 mt-1 truncate">
-                  {p.name}
-                </div>
+                <div className="text-xs font-medium text-zinc-200 mt-1 truncate">{p.name}</div>
                 <div className="text-xs sm:text-sm font-mono font-semibold text-zinc-100 mt-0.5">
                   ₹{p.price}
                 </div>
@@ -181,7 +175,6 @@ export const QuickEntryTab: React.FC<QuickEntryTabProps> = ({ notify }) => {
         </div>
       </div>
 
-      {/* Manual Inflow Section */}
       <div className="border border-zinc-800 rounded-lg p-3.5 sm:p-4 space-y-2.5">
         <div className="text-xs font-medium text-zinc-400 uppercase tracking-wider">
           Log Inflow / Top-up
@@ -197,7 +190,7 @@ export const QuickEntryTab: React.FC<QuickEntryTabProps> = ({ notify }) => {
           <select
             value={inflowSource}
             onChange={(e) => setInflowSource(e.target.value as InflowCategory)}
-            className="bg-[#09090b] border border-zinc-800 rounded-md px-2.5 py-1.5 text-xs text-zinc-200"
+            className="bg-[#09090b] border border-zinc-800 rounded-md px-2.5 py-1.5 text-xs"
           >
             {INFLOW_TYPES.map((t) => (
               <option key={t} value={t}>
@@ -239,7 +232,7 @@ export const QuickEntryTab: React.FC<QuickEntryTabProps> = ({ notify }) => {
               setInflowAmt('');
               setInflowNote('');
             }}
-            className="bg-zinc-100 hover:bg-white text-zinc-950 rounded-md font-medium text-xs py-1.5 cursor-pointer"
+            className="bg-zinc-100 text-zinc-950 rounded-md font-medium text-xs py-1.5"
           >
             + Add to Balance
           </button>
@@ -247,4 +240,4 @@ export const QuickEntryTab: React.FC<QuickEntryTabProps> = ({ notify }) => {
       </div>
     </div>
   );
-};
+}

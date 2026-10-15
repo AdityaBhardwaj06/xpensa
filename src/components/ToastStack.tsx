@@ -1,4 +1,3 @@
-import React from 'react';
 import { CheckCircle2, AlertCircle, RotateCcw } from 'lucide-react';
 import type { ToastItem } from '../constants/taxonomy';
 
@@ -7,7 +6,7 @@ interface ToastStackProps {
   onDismiss: (id: string) => void;
 }
 
-export const ToastStack: React.FC<ToastStackProps> = ({ toasts, onDismiss }) => {
+export function ToastStack({ toasts, onDismiss }: ToastStackProps) {
   return (
     <div className="fixed bottom-16 md:bottom-5 right-3 left-3 sm:left-auto sm:w-80 z-50 flex flex-col gap-2 pointer-events-none">
       {toasts.map((t) => (
@@ -46,4 +45,4 @@ export const ToastStack: React.FC<ToastStackProps> = ({ toasts, onDismiss }) => 
       ))}
     </div>
   );
-};
+}

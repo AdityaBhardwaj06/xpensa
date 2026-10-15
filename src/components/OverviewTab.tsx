@@ -1,17 +1,17 @@
-import React, { useState, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { Download } from 'lucide-react';
 import { useExpenseStore } from '../store/useExpenseStore';
 import type { Transaction } from '../types/expense';
-import { fmt } from '../constants/taxonomy';
-import type { NotifyFn } from '../constants/taxonomy';
 import { triggerHaptic, exportTransactionsToCSV } from '../utils/feedback';
+import type { NotifyFn } from '../constants/taxonomy';
+import { fmt } from '../constants/taxonomy';
 
 interface OverviewTabProps {
   notify: NotifyFn;
   onDrillDown: (opts: { place?: string; category?: string; date?: string }) => void;
 }
 
-export const OverviewTab: React.FC<OverviewTabProps> = ({ notify, onDrillDown }) => {
+export function OverviewTab({ notify, onDrillDown }: OverviewTabProps) {
   const { transactions, openingBalance, setOpeningBalance } = useExpenseStore();
 
   const [bucketScope, setBucketScope] = useState<'ALL' | 'OOP' | 'SU_ID' | 'PARENTS'>('ALL');
@@ -116,9 +116,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ notify, onDrillDown })
     };
   }, [activeDebits, periodDebits]);
 
-  // Deep Analytics: Daily Trajectory, Habits, Weekday Intensity, Ticket Tiers
   const deepAnalytics = useMemo(() => {
-    // 1. Last 14 Active Dates Trajectory
     const byDate: Record<string, number> = {};
     activeDebits.forEach((t) => {
       byDate[t.date] = (byDate[t.date] || 0) + t.price;
@@ -128,7 +126,6 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ notify, onDrillDown })
       .slice(-14);
     const maxDaily = Math.max(...recentDates.map((d) => d[1]), 1);
 
-    // 2. Habit Frequency Inspector
     const habitDefs = [
       {
         id: 'dairy',
@@ -195,7 +192,6 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ notify, onDrillDown })
       .filter((h) => h.count > 0)
       .sort((a, b) => b.sum - a.sum);
 
-    // 3. Day-of-Week Intensity
     const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     const daySums = [0, 0, 0, 0, 0, 0, 0];
     const dayCounts = [0, 0, 0, 0, 0, 0, 0];
@@ -215,27 +211,14 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ notify, onDrillDown })
       pct: Math.round((daySums[idx] / maxDaySum) * 100),
     }));
 
-    // 4. Ticket Size Distribution
     const micro = activeDebits.filter((t) => t.price <= 50);
     const mid = activeDebits.filter((t) => t.price > 50 && t.price <= 200);
     const bulk = activeDebits.filter((t) => t.price > 200);
 
     const tiers = [
-      {
-        label: 'Micro (≤ ₹50)',
-        count: micro.length,
-        sum: micro.reduce((s, t) => s + t.price, 0),
-      },
-      {
-        label: 'Mid-Ticket (₹51–₹200)',
-        count: mid.length,
-        sum: mid.reduce((s, t) => s + t.price, 0),
-      },
-      {
-        label: 'High-Ticket (> ₹200)',
-        count: bulk.length,
-        sum: bulk.reduce((s, t) => s + t.price, 0),
-      },
+      { label: 'Micro (≤ ₹50)', count: micro.length, sum: micro.reduce((s, t) => s + t.price, 0) },
+      { label: 'Mid-Ticket (₹51–₹200)', count: mid.length, sum: mid.reduce((s, t) => s + t.price, 0) },
+      { label: 'High-Ticket (> ₹200)', count: bulk.length, sum: bulk.reduce((s, t) => s + t.price, 0) },
     ];
 
     return { recentDates, maxDaily, habits, weekdayStats, tiers };
@@ -261,7 +244,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ notify, onDrillDown })
                   triggerHaptic('light');
                   setBucketScope(b.id);
                 }}
-                className={`px-2.5 py-1 text-xs font-medium rounded-sm whitespace-nowrap transition cursor-pointer ${
+                className={`px-2.5 py-1 text-xs font-medium rounded-sm whitespace-nowrap transition ${
                   bucketScope === b.id
                     ? 'bg-zinc-100 text-zinc-950'
                     : 'text-zinc-400 hover:text-zinc-200'
@@ -311,7 +294,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ notify, onDrillDown })
                 exportTransactionsToCSV(transactions);
                 notify('CSV Exported', `${transactions.length} rows downloaded`, 'info');
               }}
-              className="inline-flex items-center gap-1 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 px-2.5 py-1 rounded-md text-xs text-zinc-300 cursor-pointer"
+              className="inline-flex items-center gap-1 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 px-2.5 py-1 rounded-md text-xs text-zinc-300"
             >
               <Download className="w-3.5 h-3.5" /> CSV
             </button>
@@ -384,9 +367,8 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ notify, onDrillDown })
         </div>
       </div>
 
-      {/* Row 1: Daily Trajectory Bar Chart + Day-of-Week Intensity */}
+      {/* Daily Spend Trajectory + Day-of-Week Intensity */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
-        {/* 14-Day Daily Burn Bar Chart */}
         <div className="lg:col-span-2 border border-zinc-800/90 rounded-lg p-4 space-y-3">
           <div className="flex justify-between items-center border-b border-zinc-800/80 pb-2">
             <div>
@@ -439,7 +421,6 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ notify, onDrillDown })
           )}
         </div>
 
-        {/* Day-of-Week Intensity + Ticket Size Tiers */}
         <div className="border border-zinc-800/90 rounded-lg p-4 space-y-4">
           <div>
             <h3 className="text-xs font-medium uppercase tracking-wider text-zinc-300 border-b border-zinc-800/80 pb-2">
@@ -470,8 +451,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ notify, onDrillDown })
             {deepAnalytics.tiers.map((tier) => (
               <div key={tier.label} className="flex justify-between items-center text-xs">
                 <span className="text-zinc-300">
-                  {tier.label}{' '}
-                  <span className="text-zinc-500 font-mono">({tier.count}x)</span>
+                  {tier.label} <span className="text-zinc-500 font-mono">({tier.count}x)</span>
                 </span>
                 <span className="font-mono text-zinc-200">₹{fmt(tier.sum)}</span>
               </div>
@@ -480,7 +460,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ notify, onDrillDown })
         </div>
       </div>
 
-      {/* Row 2: Habit Frequency Inspector */}
+      {/* Habit Frequency Inspector */}
       <div className="border border-zinc-800/90 rounded-lg overflow-hidden">
         <div className="p-3.5 sm:p-4 border-b border-zinc-800/80 flex justify-between items-center">
           <div>
@@ -513,9 +493,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ notify, onDrillDown })
                 <tr key={h.id} className="hover:bg-zinc-900/30">
                   <td className="py-2.5 px-3 font-medium text-zinc-200">{h.name}</td>
                   <td className="py-2.5 px-3 text-zinc-400 font-mono text-[11px]">{h.spot}</td>
-                  <td className="py-2.5 px-3 text-right font-mono text-zinc-300">
-                    {h.count}x
-                  </td>
+                  <td className="py-2.5 px-3 text-right font-mono text-zinc-300">{h.count}x</td>
                   <td className="py-2.5 px-3 text-right font-mono text-zinc-400">
                     ₹{Math.round(h.avg)}
                   </td>
@@ -532,7 +510,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ notify, onDrillDown })
         </div>
       </div>
 
-      {/* Row 3: 3-Column Drilldown Breakdowns */}
+      {/* 3-Column Drilldown Breakdowns */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6">
         <div className="border border-zinc-800/90 rounded-lg p-3.5 space-y-3">
           <div className="flex justify-between items-center border-b border-zinc-800/80 pb-2">
@@ -658,4 +636,4 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ notify, onDrillDown })
       </div>
     </div>
   );
-};
+}
