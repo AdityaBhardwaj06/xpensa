@@ -14,9 +14,6 @@ let isApplyingRemoteUpdate = false;
 let syncDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 let activeChannel: ReturnType<NonNullable<typeof supabase>['channel']> | null = null;
 
-// Only allow legacy prototype migration for your primary email
-const OWNER_EMAIL = 'adityabhardwajxe@gmail.com';
-
 export interface UserProfile {
   id: string;
   email: string;
@@ -37,9 +34,8 @@ interface ExpenseState {
   syncError: string | null;
 
   setCurrentUser: (user: UserProfile | null) => void;
-  initRealtimeSync: (userId?: string, userEmail?: string) => () => void;
+  initRealtimeSync: (userId?: string) => () => void;
   syncNowToCloud: () => Promise<void>;
-  migrateLegacyData: () => Promise<boolean>;
 
   addPreset: (preset: Omit<QuickPreset, 'id'>) => void;
   updatePreset: (id: string, patch: Partial<QuickPreset>) => void;
@@ -88,7 +84,6 @@ export const useExpenseStore = create<ExpenseState>()(
         const prevUserId = get().lastActiveUserId;
 
         if (!user) {
-          // User signed out: wipe in-memory state so next account on this browser never inherits it
           if (syncDebounceTimer) clearTimeout(syncDebounceTimer);
           set({
             currentUser: null,
@@ -101,7 +96,6 @@ export const useExpenseStore = create<ExpenseState>()(
           return;
         }
 
-        // If switching to a different Google account on the same browser, reset local cache immediately
         if (prevUserId && prevUserId !== user.id) {
           set({
             currentUser: user,
@@ -153,32 +147,10 @@ export const useExpenseStore = create<ExpenseState>()(
         }
       },
 
-      migrateLegacyData: async () => {
-        const user = get().currentUser;
-        if (!supabase || !user) return false;
-
-        const { data, error } = await supabase
-          .from('ledger_sync')
-          .select('payload')
-          .eq('id', 'aditya_main')
-          .maybeSingle();
-
-        if (error || !data?.payload?.transactions?.length) return false;
-
-        set({
-          transactions: data.payload.transactions,
-          aliases: data.payload.aliases || DEFAULT_ALIASES,
-          presets: data.payload.presets || DEFAULT_PRESETS,
-          openingBalance: data.payload.openingBalance ?? 20000,
-        });
-        await get().syncNowToCloud();
-        return true;
-      },
-
-      initRealtimeSync: (userId, userEmail) => {
+      initRealtimeSync: (userId) => {
         if (!supabase || !userId) {
           set({ syncState: 'offline' });
-          return () => { };
+          return () => {};
         }
 
         if (activeChannel) {
@@ -189,7 +161,7 @@ export const useExpenseStore = create<ExpenseState>()(
         (async () => {
           set({ syncState: 'syncing', syncError: null });
 
-          // Fetch ONLY this authenticated user's row
+          // Fetch ONLY this specific user's row from Supabase
           const { data, error } = await supabase
             .from('ledger_sync')
             .select('payload, updated_at')
@@ -202,7 +174,7 @@ export const useExpenseStore = create<ExpenseState>()(
           }
 
           if (data?.payload) {
-            // Existing user row found in cloud -> load strictly their cloud data
+            // User has cloud data -> load it
             isApplyingRemoteUpdate = true;
             set({
               transactions: data.payload.transactions || [],
@@ -214,30 +186,7 @@ export const useExpenseStore = create<ExpenseState>()(
             });
             isApplyingRemoteUpdate = false;
           } else {
-            // Brand new user!
-            // ONLY auto-migrate 'aditya_main' if this is Aditya's main email; everyone else gets a fresh empty account
-            if (userEmail?.toLowerCase() === OWNER_EMAIL) {
-              const { data: legacy } = await supabase
-                .from('ledger_sync')
-                .select('payload')
-                .eq('id', 'aditya_main')
-                .maybeSingle();
-
-              if (legacy?.payload?.transactions?.length) {
-                isApplyingRemoteUpdate = true;
-                set({
-                  transactions: legacy.payload.transactions,
-                  aliases: legacy.payload.aliases || DEFAULT_ALIASES,
-                  presets: legacy.payload.presets || DEFAULT_PRESETS,
-                  openingBalance: legacy.payload.openingBalance ?? 20000,
-                });
-                isApplyingRemoteUpdate = false;
-                await get().syncNowToCloud();
-                return;
-              }
-            }
-
-            // Initialize fresh empty ledger for this new user
+            // Brand new user with zero cloud data -> start completely fresh
             isApplyingRemoteUpdate = true;
             set({
               transactions: [],
@@ -245,6 +194,7 @@ export const useExpenseStore = create<ExpenseState>()(
               presets: DEFAULT_PRESETS,
               openingBalance: 0,
               syncState: 'live',
+              lastSyncedAt: new Date().toLocaleTimeString(),
             });
             isApplyingRemoteUpdate = false;
             await get().syncNowToCloud();
@@ -420,20 +370,6 @@ export const useExpenseStore = create<ExpenseState>()(
               };
             }
 
-            if (t.txType === 'DEBIT') {
-              if (/YOGHURT|CHAACH|LASSI|AMUL/i.test(rawNote)) {
-                return { ...t, mode: fixedMode, place: 'Amul', cat: 'Food' as ExpenseCategory };
-              }
-              if (/PEN|PRINT|NOTEBOOK/i.test(rawNote)) {
-                return {
-                  ...t,
-                  mode: fixedMode,
-                  place: 'Hostel / Campus',
-                  cat: 'Stationery' as ExpenseCategory,
-                };
-              }
-            }
-
             return { ...t, mode: fixedMode };
           });
 
@@ -482,19 +418,6 @@ export const useExpenseStore = create<ExpenseState>()(
           };
         }
 
-        if (/YOGHURT|CHAACH|LASSI|CURD/i.test(upperNote)) {
-          return { key: upperPayee, place: 'Amul', cat: 'Food', subcat: 'Dairy', txType: 'DEBIT' };
-        }
-        if (/PEN|PRINT|XEROX/i.test(upperNote)) {
-          return {
-            key: upperPayee,
-            place: 'Hostel / Campus',
-            cat: 'Stationery',
-            subcat: 'Stationery',
-            txType: 'DEBIT',
-          };
-        }
-
         return {
           key: upperPayee,
           place: 'Other',
@@ -504,6 +427,6 @@ export const useExpenseStore = create<ExpenseState>()(
         };
       },
     }),
-    { name: 'kosh-multiuser-v2' }
+    { name: 'kosh-multiuser-v3' }
   )
 );
